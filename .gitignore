@@ -1,0 +1,17 @@
+# ---- 构建产物（发布走 Releases，不进版本库）----
+/dist/
+
+# ---- 运行期产物：日志、状态快照、回滚记录、截图池 ----
+/artifacts/
+/state/
+settings.json
+show.request
+*.log
+
+# ---- 渲染脚本临时生成的运行副本（diag-render-ui.ps1 每次自己重建）----
+src/_render-run.ps1
+
+# ---- 系统垃圾 ----
+Thumbs.db
+desktop.ini
+.DS_Store

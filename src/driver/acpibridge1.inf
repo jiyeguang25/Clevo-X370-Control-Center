@@ -1,0 +1,105 @@
+﻿;
+; AcpiBridge1.inf  —— ACPI\CLV0002 (AcpiBridge1 + DCHUService)
+;
+; 这个文件是**原厂 acpibridge1.inf 的原样拷贝**（取自 DriverStore 里注册的
+; acpibridge1.inf_amd64_cedafa39846f03cf 包），只加了这段说明。
+;
+; 为什么必须原样：早期我自己精简过这个 INF，[SourceDisksFiles] / [Drivers_Dir] 里只列了
+; AcpiBridge1.sys、DCHUService.exe、WakePanelUp_Hook.exe、InsydeDCHU.dll 四个文件。
+; 结果是"安装成功、服务在跑、设备状态 OK"，但 DCHUService.exe 干活要用的
+; GetProductdll.dll / Device.dll / Platform.dll 根本没被复制进驱动仓库 ——
+; 所有 DCHU 读数恒为 0，表现就是"面板上按钮全都不灵"。
+; 教训：驱动包的文件清单不是可选项，少一个文件就是一条真实的故障路径。
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System ; TODO: specify appropriate Class
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318} ; TODO: specify appropriate ClassGuid
+Provider= %ManufacturerName%
+CatalogFile=AcpiBridge1.cat
+DriverVer=09/17/2021, 1.0.40.0; TODO: set DriverVer in stampinf property pages
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+AcpiBridge1.sys  = 1
+DCHUService.exe = 1
+WakePanelUp_Hook.exe = 1
+LaunchFnKey.exe = 1
+CRPS.exe = 1
+;---------For DCHU
+InsydeDCHU.dll = 1
+;--------For AMD
+AMDRyzenMasterDriver.inf = 1
+AMDRyzenMasterDriver.sys = 1
+Device.dll = 1
+Platform.dll = 1
+DriverUtility.bat = 1
+GetProductdll.dll = 1
+InstallRyzenMasterSDK.exe = 1
+
+;*****************************************
+; Install Section
+;*****************************************
+
+[Manufacturer]
+CLV=CLV,NTamd64
+
+[CLV.NTamd64]
+"Acpi Bridge1"=AcpiBridge1_Device, ACPI\CLV0002 ; TODO: edit hw-id
+
+[AcpiBridge1_Device.NT]
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+AcpiBridge1.sys
+DCHUService.exe
+WakePanelUp_Hook.exe
+LaunchFnKey.exe
+CRPS.exe
+;---------For DCHU
+InsydeDCHU.dll
+;--------For AMD
+AMDRyzenMasterDriver.inf
+AMDRyzenMasterDriver.sys
+Device.dll
+Platform.dll
+DriverUtility.bat
+GetProductdll.dll
+InstallRyzenMasterSDK.exe
+
+;-------------- Service installation
+[AcpiBridge1_Device.NT.Services]
+AddService = , 0x00000002,
+AddService = CCDCHUService,%SPSVCINST_ASSOCSERVICE%, AcpiBridge1_Service_Inst
+
+; -------------- AcpiBridge1 driver install sections
+[AcpiBridge1_Service_Inst]
+DisplayName    = %AcpiBridge1.SVCDESC%
+ServiceType    = 0x00000010      ; SERVICE_KERNEL_DRIVER
+StartType      = 2               ; SERVICE_AUTO_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\DCHUService.exe
+
+; ===== 原厂这里有一段 [AcpiBridge1_Device.NT.Software] / [Software_Inst]： =====
+;   AddSoftware = ClevoCtrlPnl,,Software_Inst
+;   SoftwareType = 2
+;   SoftwareVersion = 3.55.1.0
+;   SoftwareID = pfn://CLEVOCO.FnhotkeysandOSD_6h6z29zh29qx0
+; 它的唯一作用是让 Windows 把这个设备**关联到原厂应用**（FnKey/OSD 那个 UWP 包）：
+; 装完驱动之后系统会去把它装上/拉起来。用户要的正是"不要再装原厂软件"，所以这里**故意删掉**。
+; 教训：这份 INF 是为了修驱动，不是为了修原厂生态 —— "原样拷贝"要看清哪一段在干什么。
+; 删掉它不影响驱动本身（服务安装段在上面 [AcpiBridge1_Device.NT.Services]，照旧）。
+
+[Strings]
+SPSVCINST_ASSOCSERVICE= 0x00000800
+ManufacturerName="CLEVO" ;TODO: Replace with your manufacturer name
+DiskName = "AcpiBridge1 Installation Disk"
+AcpiBridge1.DeviceDesc = "AcpiBridge1 Device"
+AcpiBridge1.SVCDESC = "Control Center Hotkey Service"
