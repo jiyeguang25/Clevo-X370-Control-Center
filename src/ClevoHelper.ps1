@@ -174,7 +174,7 @@ $script:HostExe = $HostExe
 # 默认"开"：这是个常驻托盘的监控工具，开机自启时弹一个窗口出来是打扰。
 # 第一次双击启动也收进托盘，用户从托盘图标把它叫出来即可（托盘菜单/双击）。
 $script:SettingsPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'settings.json'
-$script:Settings = @{ StartToTray = $true; FanCurve = $null }
+$script:Settings = @{ StartToTray = $true; FanCurve = $null; Led = $null; Saved = $null }
 try {
     if (Test-Path -LiteralPath $script:SettingsPath) {
         $j = Get-Content -LiteralPath $script:SettingsPath -Raw | ConvertFrom-Json
@@ -189,15 +189,42 @@ try {
                 }
             }
         }
+        # 键盘灯：你最后调的那套（模式/颜色/亮度/速度）。开机时会被注入回键盘（见下面 LedRestored）。
+        if ($null -ne $j.Led -and $null -ne $j.Led.Mode) {
+            $l = $j.Led
+            $script:Settings.Led = @{
+                Mode = [string]$l.Mode; Bright = [int]$l.Bright; Speed = [int]$l.Speed
+                Rainbow = [bool]$l.Rainbow; UseCustom = [bool]$l.UseCustom
+                R = [int]$l.R; G = [int]$l.G; B = [int]$l.B
+                Color = $(if ($null -ne $l.Color) { [int]$l.Color } else { $null })
+            }
+        }
+        # "我的配置"：你在面板里点过的电源模式 / 风扇模式 / 充电窗口。开机时会被注入回去
+        # （用户要求："每次我更改后保存，下次开机时自动注入我上次保存的东西"）。
+        if ($null -ne $j.Saved) {
+            $sv = @{}
+            foreach ($k in 'PowerMode', 'FanMode', 'ChargerEnabled', 'ChargerStart', 'ChargerStop') {
+                if ($null -ne $j.Saved.$k) { $sv[$k] = [int]$j.Saved.$k }
+            }
+            if ($sv.Count) { $script:Settings.Saved = $sv }
+        }
     }
 }
 catch { }
 function Save-Settings {
     try {
-        # -Depth 5：FanCurve 是嵌套的哈希表，默认深度会把里面那层丢掉（写出去只剩一个空对象）。
-        ($script:Settings | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
+        # -Depth 8：FanCurve / Led / Saved 都是嵌套的哈希表，默认深度会把里面那层丢掉
+        # （写出去只剩一个空对象）。Saved 里面还嵌着充电窗口，所以要更深。
+        ($script:Settings | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
     }
     catch { Write-Dbg ('settings save failed: ' + $_.Exception.Message) }
+}
+# "我的配置"里的一项改了 → 立刻存（用户要求：每次更改后保存，下次开机注入）
+function Save-MyConfig([string]$Key, $Value) {
+    if (-not $script:Settings.Saved) { $script:Settings.Saved = @{} }
+    $script:Settings.Saved[$Key] = $Value
+    Save-Settings
+    Write-Dbg ('my config saved: {0} = {1}' -f $Key, $Value)
 }
 # -StartHidden 只在启动器要求时生效；设置里的开关决定"双击启动"要不要也收进托盘。
 # 例外：-SelfTest 时必须让窗口真的显示出来 —— 自检里有几处是"真点按钮"（Invoke-Click 走
@@ -317,6 +344,8 @@ $script:FanLimits = @{ TMin = 45; TMax = 95; DMin = 30; DMax = 100; Step = 5 }
 $script:FixedFirstDuty = 28   # the EC's T1/D1 point, 71 raw - not writable through this path
 $script:FanCurveSource = 'default'   # settings / ec / default —— 只用于界面提示与日志
 $script:FanAppliedOnStart = $false   # 启动时"按我的配置写回 EC"只做一次
+$script:StartupConfigRestored = $false   # 电源/风扇模式注入只做一次
+$script:StartupChargerChecked = $false    # 充电窗口比对只做一次
 
 # 曲线上的每个数都必须是 Step(5) 的倍数：界面上只能按 5 加减，所以**读进来的值一律先吸附**，
 # 否则会冒出一个点不出来的数（比如 38%、59%、86°C）。
@@ -516,6 +545,53 @@ $script:LedSel = @{
     Custom  = @{ R = 255; G = 255; B = 255 }   # 色盘取到的颜色（UseCustom 时才用它）
     UseCustom = $false  # 用户是否用色盘挑了一个任意纯色
     Tab     = 'state'   # 状态 / 性能与散热 / 键盘灯 / 杂项
+}
+$script:LedConfigSource = 'default'   # settings / ec / default —— 只用于提示与日志
+$script:LedRestored = $false          # 启动时"把上次的灯注入回去"只做一次
+
+# ---- 键盘灯：存下来 + 开机注入回去 -------------------------------------------
+# 用户报："键盘灯每次都会重置"。原因是**灯控芯片断电就忘**：EC 的 AppSettings 镜像还在
+# （page 2 那套 Status/Effect 字节，重启后读得到），但面板以前只是把镜像读出来**显示**，
+# 从来没有把它发回键盘 —— 所以每次开机键盘都是灭的，UI 却显示"静态/白"。
+# 现在：你每次改灯（Request-Led）就存进 settings.json；启动时按下面的顺序**注入一次**：
+#   ① settings.json 里的 Led（你在面板里最后调的那套）
+#   ② 没有就用 EC 镜像里那套（原厂/以前设过的，重启后仍然在）
+#   ③ 都没有，或者那个模式不是面板提供的五个 → 什么都不发（不猜、不动键盘）
+function Save-LedConfig {
+    $s = $script:LedSel
+    $script:Settings.Led = @{
+        Mode = [string]$s.Mode; Color = [int]$s.Color; Rainbow = [bool]$s.Rainbow
+        UseCustom = [bool]$s.UseCustom
+        R = [int]$s.Custom.R; G = [int]$s.Custom.G; B = [int]$s.Custom.B
+        Bright = [int]$s.Bright; Speed = [int]$s.Speed
+    }
+    Save-Settings
+    $script:LedConfigSource = 'settings'
+}
+function Set-LedSelFromConfig($cfg) {
+    # 把一份配置（settings 里的 Led 对象，或 EC 镜像解出来的东西）填进 LedSel
+    for ($i = 0; $i -lt $script:LedModePills.Count; $i++) {
+        if ($script:LedModePills[$i].Key -eq [string]$cfg.Mode) { $script:LedSel.ModeIdx = $i; $script:LedSel.Mode = [string]$cfg.Mode; break }
+    }
+    $script:LedSel.Rainbow = [bool]$cfg.Rainbow
+    if ($null -ne $cfg.R -and $cfg.UseCustom) {
+        $script:LedSel.UseCustom = $true
+        $script:LedSel.Custom = @{ R = [int]$cfg.R; G = [int]$cfg.G; B = [int]$cfg.B }
+    }
+    elseif ($null -ne $cfg.Color) {
+        $script:LedSel.UseCustom = $false
+        $script:LedSel.Color = [int]$cfg.Color
+    }
+    if ($null -ne $cfg.Bright -and [int]$cfg.Bright -ge 0 -and [int]$cfg.Bright -lt $script:RgbBrightness.Count) { $script:LedSel.Bright = [int]$cfg.Bright }
+    if ($null -ne $cfg.Speed -and [int]$cfg.Speed -ge 0 -and [int]$cfg.Speed -lt $script:LedSpeedPills.Count) { $script:LedSel.Speed = [int]$cfg.Speed }
+}
+# 启动时就先把"我的灯"装进 LedSel，并标记已同步 —— 免得第一次采样又被 EC 镜像覆盖掉
+if ($script:Settings.Led -and $script:Settings.Led.Mode) {
+    Set-LedSelFromConfig $script:Settings.Led
+    $script:LedSynced = $true
+    $script:LedConfigSource = 'settings'
+    Write-Dbg ('led config from settings.json: mode={0} color={1} rainbow={2} custom={3} bright={4} speed={5}' -f `
+        $script:LedSel.Mode, $script:LedSel.Color, $script:LedSel.Rainbow, $script:LedSel.UseCustom, $script:LedSel.Bright, $script:LedSel.Speed)
 }
 
 # ------------------------------------------------------------ 杂项 tab state --
@@ -1443,6 +1519,10 @@ $script:Sync.Hist = @()
 # while that tab is on screen): brightness goes through WMI and the touchpad through the
 # registry, and neither is worth a query every 250 ms
 $script:Sync.WantMisc = $false
+# 启动时要跟"我的配置"比对充电窗口，而那需要一次**完整**的杂项读（平时只在杂项页可见时才读）。
+# 这个"需求"由界面点亮、由采样器在真正读完一次完整杂项后清掉 —— 直接设 WantMisc 是不行的：
+# 重画每 400ms 就会按当前标签页把它覆盖回去，而杂项读最快也要 1 秒才轮到。
+$script:Sync.NeedFullMisc = $false
 $script:Sync.MiscDirty = $false
 $script:Sync.WantBright = $false      # 状态页：只读亮度这一路
 # static host facts, queried once
@@ -1496,7 +1576,10 @@ function Request-Write {
 
 for ($i = 0; $i -lt $script:PowerPills.Count; $i++) {
     $mode = $script:PowerPills[$i].Id
-    $n["Pwr$i"].Add_MouseLeftButtonUp({ Request-Write -Mode $mode -Kind 'power' }.GetNewClosure())
+    $n["Pwr$i"].Add_MouseLeftButtonUp({
+        Request-Write -Mode $mode -Kind 'power'
+        Save-MyConfig 'PowerMode' $mode        # 点过的就是"我的配置"，下次开机注入
+    }.GetNewClosure())
 }
 $n.RevertBtn.Add_MouseLeftButtonUp({ Request-Write -Mode 0 -Kind 'restore' })
 
@@ -1606,6 +1689,9 @@ function Request-Led {
         At = (Get-Date)
     }
     $n.StatusText.Text = ('正在应用键盘灯：{0} …' -f $script:LedModePills[[int]$sel.ModeIdx].Label)
+    # 你按下去的这一套就是"我的键盘灯"：存进 settings.json，下次开机注入回键盘
+    # （灯控芯片断电就忘，这是唯一能让它自己回来的办法 —— 见 Save-LedConfig 上面的说明）
+    Save-LedConfig
 }
 
 # ---- 杂项：每一项都是「写 + 读回」 ------------------------------------------
@@ -1650,6 +1736,12 @@ for ($i = 0; $i -lt $script:ChargerPills.Count; $i++) {
             $start = $(if ($key -eq 'rec') { [int]$script:ChargerRecommended.Start } else { [int]$script:MiscSel.Start })
             $stop = $(if ($key -eq 'rec') { [int]$script:ChargerRecommended.Stop } else { [int]$script:MiscSel.Stop })
             Request-Misc -Sub 'charger' -Value ([pscustomobject]@{ Mode = $key; Start = $start; Stop = $stop })
+            # 充电窗口也是"我的配置"：下次开机按这个注入回去（最大电量 = 关闭限制）
+            Save-MyConfig 'ChargerEnabled' $(if ($key -eq 'max') { 0 } else { 1 })
+            if ($key -ne 'max') {
+                Save-MyConfig 'ChargerStart' $start
+                Save-MyConfig 'ChargerStop' $stop
+            }
         }
     }.GetNewClosure())
 }
@@ -1658,6 +1750,8 @@ for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
     $n["ChgS$i"].Add_MouseLeftButtonUp({
         $script:MiscSel.Start = $v
         Request-Misc -Sub 'start' -Value ([pscustomobject]@{ Start = $v; Stop = [int]$script:MiscSel.Stop })
+        Save-MyConfig 'ChargerEnabled' 1
+        Save-MyConfig 'ChargerStart' $v
     }.GetNewClosure())
 }
 for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
@@ -1665,6 +1759,8 @@ for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
     $n["ChgE$i"].Add_MouseLeftButtonUp({
         $script:MiscSel.Stop = $v
         Request-Misc -Sub 'stop' -Value ([pscustomobject]@{ Start = [int]$script:MiscSel.Start; Stop = $v })
+        Save-MyConfig 'ChargerEnabled' 1
+        Save-MyConfig 'ChargerStop' $v
     }.GetNewClosure())
 }
 
@@ -1912,6 +2008,7 @@ function Request-FanCurve {
     $script:LedSel.FanIdx = $script:FanCustomIndex
     # 你按下去的这一套就是"我的配置"：写进 settings.json，下次启动直接用它（不再读 EC 的当前值）
     Save-FanCurve
+    Save-MyConfig 'FanMode' 6          # 「自定义」这个选择本身也要记住，否则重启后曲线不会被套用
     $n.StatusText.Text = '正在写风扇曲线「自定义」…（约 1 秒）'
 }
 $script:FanCustomIndex = 2   # index of the 自定义 pill
@@ -1922,7 +2019,10 @@ for ($i = 0; $i -lt $script:FanPills.Count; $i++) {
     }
     else {
         $mode = [int]$p.Mode
-        $n["Fan$i"].Add_MouseLeftButtonUp({ Request-Write -Mode $mode -Kind 'fan' }.GetNewClosure())
+        $n["Fan$i"].Add_MouseLeftButtonUp({
+            Request-Write -Mode $mode -Kind 'fan'
+            Save-MyConfig 'FanMode' $mode      # 点过的就是"我的配置"，下次开机注入
+        }.GetNewClosure())
     }
 }
 
@@ -2361,6 +2461,8 @@ $sampler = {
                 try { $mi.Battery = Get-BatteryState }
                 catch { Add-Content -LiteralPath $S.LogPath -Value ('MISC battery read failed: ' + $_.Exception.Message) -ErrorAction SilentlyContinue }
                 $snap.Misc = [pscustomobject]$mi
+                # 这次是完整读（含充电窗口）—— 启动时那个"必须读一次"的需求可以撤了
+                $S.NeedFullMisc = $false
                 if (-not $S.MiscLogged) {
                     $S.MiscLogged = $true
                     Add-Content -LiteralPath $S.LogPath -Value ('MISC first read: bright={0} touchpad={1} numlock={2} charger={3}/{4} enabled={5} winKey={6} fnLock={7} winFn={8}' -f `
@@ -2712,6 +2814,117 @@ function Update-Panel {
         }
         $script:LedSynced = $true
     }
+
+    # ---- 启动时把上次的键盘灯**注入回键盘** --------------------------------------
+    # 键盘灯是硬件会忘的东西：断电后灯控芯片里的状态没了，而 EC 的 AppSettings 镜像还在。
+    # 面板以前只读镜像**显示**、从不发回键盘，所以每次开机灯都是灭的（用户报的"每次都会重置"）。
+    # 取值顺序：settings.json 里你最后调的那套 → EC 镜像那套 → 都不动键盘。
+    # 每个进程只做一次；模式必须是面板提供的五个之一（否则没有对应的 UI 状态，宁可不发）。
+    # 等 KbReady：键盘灯那一层是采样器在启动时加载的，没加载就发不了（那时先等下一次重画，
+    # 别把这个"只做一次"的机会浪费掉 —— 否则键盘会一直是灭的）。
+    if (-not $script:LedRestored -and $null -ne $script:Sync.Snapshot) {
+        if (-not $script:Sync.KbReady) {
+            if (-not $script:LedRestoreWaited) {
+                $script:LedRestoreWaited = $true
+                Write-Dbg 'LED restore: 键盘灯层还没就绪，等下一次重画再注入'
+            }
+        }
+        else {
+            $script:LedRestored = $true
+            $offered = @($script:LedModePills | ForEach-Object { $_.Key })
+            $mode = ''; $from = ''
+            if ($script:Settings.Led -and $script:Settings.Led.Mode) {
+                $mode = [string]$script:Settings.Led.Mode
+                $from = 'settings.json'
+            }
+            elseif ($s.LedMode) {
+                $mode = [string]$s.LedMode
+                $from = 'EC 镜像'
+                # EC 镜像只给了模式和一个 RGB（没有色块下标），所以要**反推**用户当时选的是什么。
+                # 关键一条：彩虹（多色）不是颜色值，帧里走的是固件自己的调色板（0xA1→0x71），
+                # 而镜像里存的 R/G/B 就是当时传的值 —— 选彩虹时那个值是 0/0/0（彩虹色块本身没有 RGB）。
+                # 所以：模式支持彩虹 + 镜像颜色是 0/0/0 → 那是"彩虹"，不能当"黑色单色"再发一遍
+                # （我第一版就是那样，结果把键盘注入成"波动 + 纯黑"，等于没亮）。
+                $pill = $(if ($script:LedSel.ModeIdx -ge 0) { $script:LedModePills[$script:LedSel.ModeIdx] } else { $null })
+                $supportsRainbow = ($null -ne $pill -and [bool]$pill.Rainbow)
+                $col = $s.LedColor
+                $isBlack = ($null -eq $col) -or ([int]$col[0] -eq 0 -and [int]$col[1] -eq 0 -and [int]$col[2] -eq 0)
+                if ($supportsRainbow -and $isBlack) {
+                    $rainbowIdx = 0
+                    for ($i = 0; $i -lt $script:RgbPills.Count; $i++) { if ($script:RgbPills[$i].ContainsKey('Rainbow')) { $rainbowIdx = $i; break } }
+                    $script:LedSel.Rainbow = $true
+                    $script:LedSel.UseCustom = $false
+                    $script:LedSel.Color = $rainbowIdx
+                    Write-Dbg 'LED restore: 镜像里是 0/0/0 + 该模式支持彩虹 → 按"彩虹"恢复（固件调色板）'
+                }
+                else {
+                    $script:LedSel.Rainbow = $false
+                    if ($col) {
+                        Set-LedSelFromConfig @{
+                            Mode = $mode; Rainbow = $false; UseCustom = $true
+                            R = [int]$col[0]; G = [int]$col[1]; B = [int]$col[2]
+                            Bright = $script:LedSel.Bright; Speed = $script:LedSel.Speed; Color = $null
+                        }
+                    }
+                }
+                $script:LedConfigSource = 'ec'
+            }
+            if ($mode -and ($offered -contains $mode)) {
+                Write-Dbg ('LED restore: 把上次的键盘灯注入回键盘（来源={0} 模式={1} 亮度={2} 速度={3}）' -f `
+                    $from, $mode, $script:LedSel.Bright, $script:LedSel.Speed)
+                Request-Led
+            }
+            elseif ($mode) { Write-Dbg ('LED restore: EC/配置里的模式 {0} 面板不提供，跳过注入' -f $mode) }
+            else { Write-Dbg 'LED restore: 没有任何可注入的键盘灯配置（键盘保持原样）' }
+        }
+    }
+    # ---- 启动时把"我的配置"注入回去：电源模式 / 风扇模式 / 充电窗口 ------------------
+    # 用户要求："每次我更改后保存，下次开机时自动注入我上次保存的东西"。
+    # 规则：**只注入和 EC 现在不一样的那些**（一样的就不写，免得每次开机都无谓地写 EC）；
+    # 每一项都走面板平时的写入通道（带读回校验）。你上次在面板里点的是什么，这里就套什么 ——
+    # 所以想留在"自动"，就在面板里点一下「自动」，它就成了你的配置。
+    if (-not $script:StartupConfigRestored -and $script:Settings.Saved -and $null -ne $script:Sync.Snapshot) {
+        $script:StartupConfigRestored = $true
+        $sv = $script:Settings.Saved
+        $did = New-Object System.Collections.ArrayList
+        if ($null -ne $sv.PowerMode -and $null -ne $s.PowerMode -and [int]$sv.PowerMode -ne [int]$s.PowerMode) {
+            Write-Dbg ('STARTUP config: 电源模式 EC={0} 你的配置={1} → 按配置写回' -f $s.PowerMode, $sv.PowerMode)
+            Request-Write -Mode ([int]$sv.PowerMode) -Kind 'power'
+            [void]$did.Add(('电源→{0}' -f $sv.PowerMode))
+        }
+        if ($null -ne $sv.FanMode -and $null -ne $s.FanMode -and [int]$sv.FanMode -ne [int]$s.FanMode) {
+            Write-Dbg ('STARTUP config: 风扇模式 EC={0} 你的配置={1} → 按配置写回' -f $s.FanMode, $sv.FanMode)
+            Request-Write -Mode ([int]$sv.FanMode) -Kind 'fan'
+            [void]$did.Add(('风扇→{0}' -f $sv.FanMode))
+        }
+        # 充电窗口要读一次 EC 才能比（那份状态平时只在杂项页可见时才读）
+        if ($null -ne $sv.ChargerEnabled) { $script:Sync.NeedFullMisc = $true }
+        if ($did.Count) { Write-Dbg ('STARTUP config: 已按你的配置注入 {0}' -f ($did -join '、')) }
+        elseif ($null -eq $sv.ChargerEnabled) { Write-Dbg 'STARTUP config: EC 和你保存的配置一致，无需注入' }
+    }
+    # 充电窗口：等杂项那次读取回来（WantMisc 是上面为了比较才点亮的），不一致才写
+    if (-not $script:StartupChargerChecked -and $script:Settings.Saved -and
+        $null -ne $script:Settings.Saved.ChargerEnabled -and
+        $null -ne $s.Misc -and $null -ne $s.Misc.ChargerStart) {
+        $script:StartupChargerChecked = $true
+        $sv = $script:Settings.Saved
+        $mi = $s.Misc
+        $wantOn = ([int]$sv.ChargerEnabled -ne 0)
+        $nowOn = ([int]$mi.ChargerStart -gt 0 -or [int]$mi.ChargerStop -gt 0)
+        $same = ($wantOn -eq $nowOn)
+        if ($wantOn -and $same) {
+            $same = ([int]$mi.ChargerStart -eq [int]$sv.ChargerStart -and [int]$mi.ChargerStop -eq [int]$sv.ChargerStop)
+        }
+        if (-not $same) {
+            Write-Dbg ('STARTUP config: 充电窗口 EC={0}/{1}（启用={2}）你的配置={3}/{4}（启用={5}）→ 按配置写回' -f `
+                $mi.ChargerStart, $mi.ChargerStop, $nowOn, $sv.ChargerStart, $sv.ChargerStop, $wantOn)
+            Request-Misc -Sub 'charger' -Value ([pscustomobject]@{
+                    Mode = $(if ($wantOn) { 'custom' } else { 'max' })
+                    Start = [int]$sv.ChargerStart; Stop = [int]$sv.ChargerStop
+                })
+        }
+        else { Write-Dbg ('STARTUP config: 充电窗口和你的配置一致（{0}-{1}%），无需注入' -f $mi.ChargerStart, $mi.ChargerStop) }
+    }
     # ---- 风扇：三颗按钮，自定义只在 EC 模式 6 时亮 ----
     # The curve presets are gone, so a pill no longer needs to be matched against block 13:
     # 自动 = mode 0, 最大 = mode 1, 自定义 = mode 6 (whatever table is loaded).
@@ -2836,7 +3049,9 @@ function Update-Panel {
     Set-Pill $n.TabBtnMisc $n.TabBtnMiscT ($tab -eq 'misc') '#FFB98BFF'
     Set-Pill $n.TabBtnAbout $n.TabBtnAboutT ($tab -eq 'about') '#FFB98BFF'
     # the sampler only reads the 杂项 channels while that page is the one on screen
-    $script:Sync.WantMisc = ($tab -eq 'misc')
+    # （启动时若还欠一次完整杂项读 —— 为了跟"我的配置"比充电窗口 —— 就一直要点着它，
+    #   读完那次由采样器把 NeedFullMisc 清掉，见采样器里那行）
+    $script:Sync.WantMisc = ($tab -eq 'misc') -or [bool]$script:Sync.NeedFullMisc
     # 状态页只要一个亮度值（滑杆在那里），所以单独给它一路轻量读取：没必要为了一个数字
     # 把触控板/电池/充电器都拉一遍，那会把采样周期拖慢。
     $script:Sync.WantBright = ($tab -eq 'state')
@@ -3670,6 +3885,38 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                 Write-Dbg ('SELFTEST window: shown={0} loaded={1}' -f $script:Win.IsVisible, $script:Win.IsLoaded)
             }
             3 { Write-Dbg 'SELFTEST: simulating click on [省电]'; Request-Write -Mode 1 -Kind 'power' }
+            6 {
+                # 键盘灯"开机自动注入"这条链路的验证（用户报：键盘灯每次都会重置）。
+                # 这里看两件事：① 启动时到底注入了没有（日志里有 LED restore 那行，这里看状态与镜像）；
+                # ② 配置能不能存下来并在下次启动读回来（存 → 独立再读，写到临时文件，不碰你的 settings.json）。
+                $s2 = $script:Sync.Snapshot
+                Write-Dbg ('SELFTEST led: 已注入={0} 配置来源={1} 键盘灯层就绪={2} 当前选择 模式={3} 亮度={4} 速度={5}' -f `
+                    $script:LedRestored, $script:LedConfigSource, $script:Sync.KbReady,
+                    $script:LedSel.Mode, $script:LedSel.Bright, $script:LedSel.Speed)
+                Write-Dbg ('SELFTEST led: EC 镜像里现在写的模式={0}（期望等于上面那个模式：注入成功的证据）' -f `
+                    $(if ($s2) { $s2.LedMode } else { 'none' }))
+                $keepPath = $script:SettingsPath
+                $keepLed = $script:Settings.Led
+                $keepSrc = $script:LedConfigSource
+                $tmp = Join-Path $env:TEMP 'clevo-led-roundtrip.json'
+                try {
+                    $script:SettingsPath = $tmp
+                    Save-LedConfig
+                    Start-Sleep -Milliseconds 120
+                    $j = (Get-Content -LiteralPath $tmp -Raw) | ConvertFrom-Json
+                    $ok = ($null -ne $j.Led -and [string]$j.Led.Mode -eq [string]$script:LedSel.Mode -and
+                           [int]$j.Led.Bright -eq [int]$script:LedSel.Bright -and [int]$j.Led.Speed -eq [int]$script:LedSel.Speed)
+                    Write-Dbg ('SELFTEST led: settings.json 往返 ok={0}；文件里 mode={1} bright={2} speed={3} rainbow={4} custom={5}' -f `
+                        $ok, $j.Led.Mode, $j.Led.Bright, $j.Led.Speed, $j.Led.Rainbow, $j.Led.UseCustom)
+                }
+                catch { Write-Dbg ('SELFTEST led: 往返失败: ' + $_.Exception.Message) }
+                finally {
+                    $script:SettingsPath = $keepPath
+                    $script:Settings.Led = $keepLed
+                    $script:LedConfigSource = $keepSrc
+                    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                }
+            }
             8 {
                 $lw = $script:Sync.LastWrite
                 Write-Dbg ('SELFTEST power result: ok={0} msg={1}' -f $lw.Ok, $lw.Msg)
@@ -3729,6 +3976,9 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                     Color = [int]$script:LedSel.Color; Rainbow = [bool]$script:LedSel.Rainbow
                     UseCustom = [bool]$script:LedSel.UseCustom
                     Mode = [string]$script:LedSel.Mode; ModeIdx = [int]$script:LedSel.ModeIdx
+                    # 自定义 RGB 也要存！第一版漏了它，自检点完色盘只还原了 UseCustom/Color，
+                    # 于是把用户的"自定义颜色"永久留成了测试取的那个颜色（真踩了）。
+                    R = [int]$script:LedSel.Custom.R; G = [int]$script:LedSel.Custom.G; B = [int]$script:LedSel.Custom.B
                 }
                 # 色盘只在需要颜色的模式才发颜色，所以这里先切到「静态」，测完再切回去 ——
                 # 否则用户把灯设成「关闭」时，这个测试测到的是"关闭不发颜色"而不是取色链路。
@@ -3749,8 +3999,9 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                 $script:LedSel.UseCustom = [bool]$b.UseCustom
                 $script:LedSel.Mode = [string]$b.Mode
                 $script:LedSel.ModeIdx = [int]$b.ModeIdx
+                $script:LedSel.Custom = @{ R = [int]$b.R; G = [int]$b.G; B = [int]$b.B }   # 自定义颜色也还原
                 Request-Led
-                Write-Dbg 'SELFTEST: restored the pre-test colour + mode selection'
+                Write-Dbg ('SELFTEST: restored the pre-test colour + mode selection（含自定义 RGB {0}/{1}/{2}）' -f $b.R, $b.G, $b.B)
             }
             40 {
                 # 把上一次写入的记录清掉，这样 42 那一下真点产生的写入是**唯一**能出现在
