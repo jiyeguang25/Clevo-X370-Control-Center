@@ -579,12 +579,14 @@ $fi = Get-Item -LiteralPath $exe
 
 # ------------------------------------------------- 部署到本机（可重复）---
 # 构建产物落在 dist\，但**用户实际运行的那一份**在 %LOCALAPPDATA%\ClevoHelper\ClevoHelper.exe：
-# 桌面、开始菜单、AUMID、开机自启全都指向它（用户把桌面 exe 删掉过 —— 自启写死桌面路径就是这么
+# 开始菜单、AUMID、开机自启全都指向它（用户把桌面 exe 删掉过 —— 自启写死桌面路径就是这么
 # 炸的，会每次登录弹「系统找不到指定的文件」）。这一步把 dist 的产物复制过去并刷新那些指向。
+# **-NoDesktop：不要动用户桌面。** 他明确把桌面那个快捷方式删了，构建脚本不该偷偷放回去。
+# 想要桌面快捷方式时手动跑：src\Install-ClevoHelper.ps1（不带 -NoDesktop）。
 $installScript = Join-Path $src 'Install-ClevoHelper.ps1'
 if (Test-Path -LiteralPath $installScript) {
     Write-Host 'deploy:'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installScript -Source $fi.FullName
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installScript -Source $fi.FullName -NoDesktop
     if ($LASTEXITCODE -ne 0) { Write-Host ('  deploy exit {0}' -f $LASTEXITCODE) }
 }
 else { Write-Host ('  deploy script missing: {0}' -f $installScript) }
