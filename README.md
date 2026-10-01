@@ -24,7 +24,7 @@
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载 `ClevoHelper-v1.0.exe`（文件名带版本号）：
+到本仓库的 **Releases** 页面下载最新那个 `ClevoHelper-vX.Y.exe`（文件名带版本号）：
 
 | | |
 |---|---|
