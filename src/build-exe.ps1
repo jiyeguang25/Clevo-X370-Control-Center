@@ -209,6 +209,102 @@ static class Program
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
     delegate bool EnumWindowsProc(IntPtr h, IntPtr p);
 
+    // ---- 不闪黑框地启动子进程：原生 CreateProcess ----------------------------------
+    // 这里原来走 WMI（Win32_Process.Create + Win32_ProcessStartup.ShowWindow=0），为了"不闪黑框"。
+    // 2026-10-01 用户报：双击 exe 弹 "ClevoHelper failed to start: ManagementException: 拒绝访问"，
+    // 面板完全起不来 —— 卡在 mc.InvokeMethod("Create")。实测结论：**不带 ProcessStartupInformation
+    // 的普通 Create 仍然成功**，被拒的是这个"带启动信息（ShowWindow）"的变体（当前 Windows 版本/
+    // 策略下如此）。现在改用原生 CreateProcess + CREATE_NO_WINDOW：不经过 WMI、不需要任何特权，
+    // 效果一样（控制台程序连控制台窗口都不会建），少一层依赖，也就少一种起不来的可能。
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO
+    {
+        public int cb;
+        public string lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess, hThread;
+        public int dwProcessId, dwThreadId;
+    }
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcess(string lpApplicationName, string lpCommandLine,
+        IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags,
+        IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+    [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+    const uint CREATE_NO_WINDOW = 0x08000000;
+
+    /// <summary>用 CreateProcess 起子进程；noWindow=true 时连控制台都不建（= 老的 ShowWindow=0 效果）。
+    /// 起完盯 6 秒：如果它这么快就退出了，把退出码写进日志 —— "双击没反应"最常见的原因就是
+    /// 子进程其实起来了但立刻自己退了（退出码 0 = 它自己决定退，比如"已经有实例在跑"）。</summary>
+    static void StartNative(string cmd, string workDir, bool noWindow)
+    {
+        STARTUPINFO si = new STARTUPINFO();
+        si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+        if (noWindow) si.dwFlags = 1;                 // STARTF_USESHOWWINDOW
+        si.wShowWindow = 0;                           // SW_HIDE
+        PROCESS_INFORMATION pi;
+        uint flags = noWindow ? CREATE_NO_WINDOW : 0;
+        if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, workDir, ref si, out pi))
+        {
+            int err = Marshal.GetLastWin32Error();
+            throw new Exception("CreateProcess failed, Win32Error=" + err);
+        }
+        Log("child pid=" + pi.dwProcessId);
+        uint w = WaitForSingleObject(pi.hProcess, 6000);
+        if (w == 0)
+        {
+            uint code;
+            GetExitCodeProcess(pi.hProcess, out code);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            // 退出码 0 = 子进程自己决定退出（典型：已经有面板在跑，它把请求交出去就退了）——
+            // 这不算启动失败，否则"重复双击"会被误判成错误、还白弹一个框。
+            if (code == 0)
+            {
+                Log("child exited quickly with code 0 (它自己退的，例如已有实例) —— 视为成功");
+                return;
+            }
+            throw new Exception("child exited within 6s, exit code=" + code);
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+
+    /// <summary>进门日志：写在 EXE 旁边（EXE 所在目录一定可写 —— 用户能双击它就能读它）。</summary>
+    static void LogEntry(string msg)
+    {
+        try
+        {
+            string p = Path.Combine(Path.GetDirectoryName(ExePath), "launcher-entry.log");
+            File.AppendAllText(p, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + "\r\n");
+        }
+        catch { }
+    }
+
+    /// <summary>启动器自己的日志：出问题时能看出它走了哪条路、错在哪。
+    /// 同时写 %TEMP%（一定可写）和 AppDir 旁边的 artifacts（给用户看的）——
+    /// 只写后者踩过一次坑：路径/权限一旦出问题，日志本身也消失了，等于什么都查不到。</summary>
+    static void Log(string msg)
+    {
+        LogEntry("Log: " + msg);                  // 同一份内容也写进 EXE 旁边那份（一定能写）
+        string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + "\r\n";
+        try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "ClevoHelper-launcher.log"), line); } catch { }
+        try
+        {
+            string dir = Path.Combine(Path.GetDirectoryName(AppDir), "artifacts");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "launcher.log"), line);
+        }
+        catch { }
+    }
+
     static string ExePath { get { return Assembly.GetExecutingAssembly().Location; } }
     static string AppDir
     {
@@ -235,7 +331,11 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        // 进门先落一笔（写在 EXE 旁边）：排查"双击了但什么都没发生"这类问题时，
+        // 第一件必须确定的事就是"到底有没有进 Main、参数是什么"。这行不能依赖 AppDir/环境。
+        LogEntry("enter Main: args=[" + string.Join(" ", args) + "]");
         string mode = args.Length > 0 ? args[0].Trim().ToLowerInvariant() : "";
+        LogEntry("mode resolved: [" + mode + "]");
 
         if (mode == "--help" || mode == "-h" || mode == "/?")
         {
@@ -299,12 +399,13 @@ static class Program
 
         try
         {
+            Log("launcher start: mode='" + mode + "' exe=" + ExePath);
             string panel = Extract();
-            // --tray：启动后直接收进托盘（开机自启走这条路），不显示窗口
             return Launch(panel, mode == "--self-test", mode == "--tray");
         }
         catch (Exception ex)
         {
+            Log("FAILED: " + ex.ToString().Replace("\r\n", " | "));
             MessageBox.Show("ClevoHelper failed to start:\r\n\r\n" + ex, AppName,
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
@@ -355,28 +456,88 @@ static class Program
     }
 
     /// <summary>
-    /// 用 WMI 起一个**完全不显示窗口**的进程。
-    /// 只写 `powershell.exe ... -WindowStyle Hidden` 是不够的：控制台窗口在进程创建时就被
-    /// 系统分配好了，PowerShell 再把自己藏起来 —— 中间那一瞬就是用户看到的"启动时闪一下
-    /// 黑窗口"。正确做法是创建时就告诉系统 SW_HIDE（Win32_ProcessStartup.ShowWindow = 0），
-    /// 窗口从一开始就不存在。同时保留 WMI 父进程关系，面板不会被启动器的 job 带走。
+    /// 起一个**完全不显示窗口**的面板进程：首选 CreateProcess + CREATE_NO_WINDOW，
+    /// 失败再退到普通 CreateProcess，最后才用 WMI（详见下面那段注释）。
     /// </summary>
-    static void StartHidden(string cmd)
+    static void StartHidden(string cmd, string workDir)
     {
-        using (ManagementClass mc = new ManagementClass("Win32_Process"))
-        using (ManagementClass sc = new ManagementClass("Win32_ProcessStartup"))
-        using (ManagementBaseObject inParams = mc.GetMethodParameters("Create"))
-        using (ManagementBaseObject startup = sc.CreateInstance())
+        // 三条路依次试，任何一条成功就返回。为什么要有三条：
+        // 2026-10-01 用户双击 exe 弹 "ClevoHelper failed to start: ManagementException: 拒绝访问"，
+        // 面板完全起不来 —— 卡在 WMI 那条路（Win32_Process.Create + Win32_ProcessStartup.ShowWindow=0）。
+        // 实测：不带 ProcessStartupInformation 的普通 WMI Create 仍然成功，被拒的是"带启动信息"的变体。
+        // 现在首选原生 CreateProcess + CREATE_NO_WINDOW（不经过 WMI、不需要特权，且同样不建控制台窗口），
+        // WMI 只作兜底；三条全失败才抛，并把每条的错误写进 launcher.log 供排查。
+        string e1 = null, e2 = null, e3 = null;
+        // 子进程的输出必须留下来：面板进程如果自己起来就退了（例如脚本报错），
+        // 以前这里是完全静默的 —— 用户和排查者都只能看到"双击没反应"。
+        // 做法：把启动命令写成一个临时 .cmd（内部重定向 stdout/stderr 到 panel-start.log），
+        // 再 CreateProcess 这个 .cmd。**不要**在命令行里拼 `cmd /c "..." > log`：
+        // 那层引号在 cmd 眼里是字面量，会 17ms 就退出（这条我自己踩过）。
+        string artDir = Path.Combine(Path.GetDirectoryName(AppDir), "artifacts");
+        string logFile = Path.Combine(artDir, "panel-start.log");
+        string cmdFile = Path.Combine(artDir, "start-panel.cmd");
+        bool haveWrapper = false;
+        try
         {
-            startup["ShowWindow"] = (ushort)0;                 // SW_HIDE
-            inParams["CommandLine"] = cmd;
-            inParams["ProcessStartupInformation"] = startup;
-            using (ManagementBaseObject outParams = mc.InvokeMethod("Create", inParams, null))
-            {
-                uint rc = (uint)outParams["ReturnValue"];
-                if (rc != 0) throw new Exception("Win32_Process.Create failed, ReturnValue=" + rc);
-            }
+            Directory.CreateDirectory(artDir);
+            File.WriteAllText(cmdFile,
+                "@echo off\r\nrem 由 ClevoHelper.exe 生成；面板的 stdout/stderr 都进 panel-start.log\r\n" +
+                cmd + " >> \"" + logFile + "\" 2>&1\r\n",
+                new System.Text.UTF8Encoding(false));
+            haveWrapper = true;
         }
+        catch (Exception ex) { Log("写 start-panel.cmd 失败: " + ex.Message); }
+        if (haveWrapper)
+        {
+            try
+            {
+                StartNative("cmd.exe /c \"" + cmdFile + "\"", workDir, true);
+                Log("started via cmd wrapper + CREATE_NO_WINDOW (输出见 artifacts\\panel-start.log)");
+                return;
+            }
+            catch (Exception ex) { e1 = ex.Message; Log("cmd wrapper failed: " + e1); }
+        }
+
+        try
+        {
+            StartNative(cmd, workDir, true);
+            Log("started via CreateProcess(CREATE_NO_WINDOW)");
+            return;
+        }
+        catch (Exception ex) { e2 = ex.Message; Log("CreateProcess(CREATE_NO_WINDOW) failed: " + e2); }
+
+        try
+        {
+            StartNative(cmd, workDir, false);
+            Log("started via CreateProcess (no CREATE_NO_WINDOW, may flash a console). previous: " + e2);
+            return;
+        }
+        catch (Exception ex) { e3 = ex.Message; Log("CreateProcess failed: " + e3); }
+
+        try
+        {
+            using (ManagementClass mc = new ManagementClass("Win32_Process"))
+            using (ManagementClass sc = new ManagementClass("Win32_ProcessStartup"))
+            using (ManagementBaseObject inParams = mc.GetMethodParameters("Create"))
+            using (ManagementBaseObject startup = sc.CreateInstance())
+            {
+                startup["ShowWindow"] = (ushort)0;                 // SW_HIDE
+                inParams["CommandLine"] = cmd;
+                inParams["CurrentDirectory"] = workDir;
+                inParams["ProcessStartupInformation"] = startup;
+                using (ManagementBaseObject outParams = mc.InvokeMethod("Create", inParams, null))
+                {
+                    uint rc = (uint)outParams["ReturnValue"];
+                    if (rc != 0) throw new Exception("Win32_Process.Create failed, ReturnValue=" + rc);
+                }
+            }
+            Log("started via WMI (fallback)");
+            return;
+        }
+        catch (Exception ex) { e3 = ex.Message; Log("WMI fallback failed: " + e3); }
+
+        throw new Exception("三种启动方式都失败：\r\n  CreateProcess(CREATE_NO_WINDOW): " + e1 +
+                            "\r\n  CreateProcess: " + e2 + "\r\n  WMI: " + e3);
     }
 
     // --- start -------------------------------------------------------------------
@@ -384,6 +545,7 @@ static class Program
     {
         int running = FindPanelByMutex();
         if (running == 0) running = FindRunning(panel);
+        Log("launch: panel=" + panel + " runningPid=" + running + " toTray=" + toTray + " selfTest=" + selfTest);
         if (running != 0) return ActivateExisting(running, panel, selfTest);
 
         string exe = ExePath;
@@ -392,7 +554,9 @@ static class Program
         if (toTray) cmd += " -StartHidden";
         if (selfTest) cmd += " -SelfTest";
 
-        StartHidden(cmd);
+        // 工作目录给面板自己那层目录：面板内部都用 $PSScriptRoot 定位兄弟脚本，
+        // 但相对路径（日志、解包文件）也应该是可预期的
+        StartHidden(cmd, Path.GetDirectoryName(panel));
         return 0;
     }
 
@@ -429,12 +593,10 @@ static class Program
             string cmd = "powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \""
                        + panel + "\" -HostExe \"" + ExePath + "\"";
             if (selfTest) cmd += " -SelfTest";
-            using (ManagementClass mc = new ManagementClass("Win32_Process"))
-            using (ManagementBaseObject inParams = mc.GetMethodParameters("Create"))
-            {
-                inParams["CommandLine"] = cmd;
-                mc.InvokeMethod("Create", inParams, null);
-            }
+            // 走和正常启动同一条路（原生 CreateProcess 优先），这样这条"再开一个"的分支
+            // 不会因为 WMI 被拒而同样失效 —— 它本来就是给"面板卡死"时用的救命通道
+            try { StartHidden(cmd, Path.GetDirectoryName(panel)); }
+            catch (Exception ex) { MessageBox.Show("再启动一个面板失败：\r\n\r\n" + ex.Message, AppName, MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
         return 0;
     }
@@ -480,24 +642,14 @@ static class Program
         catch (WaitHandleCannotBeOpenedException) { return 0; }
         catch { return 0; }
 
-        int me = Process.GetCurrentProcess().Id;
-        try
-        {
-            using (ManagementObjectSearcher s = new ManagementObjectSearcher(
-                "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='powershell.exe'"))
-            {
-                foreach (ManagementBaseObject o in s.Get())
-                {
-                    int pid = Convert.ToInt32(o["ProcessId"]);
-                    string cl = o["CommandLine"] as string;
-                    if (pid != me && cl != null && cl.IndexOf("ClevoHelper.ps1", StringComparison.OrdinalIgnoreCase) >= 0)
-                        return pid;
-                }
-            }
-        }
-        catch { }
-        return 0;
+        // 认进程必须用**完整命令行形态**（-File "<面板脚本全路径>"），不能只看到 "ClevoHelper.ps1"
+        // 就算数：任何命令行里提到这个文件名的 powershell.exe 都会被误认（我自己就踩过 ——
+        // 诊断脚本的命令行里带着这个字符串，于是启动器以为"面板已经在跑"，转而走
+        // ActivateExisting，结果既不启动面板也不报错，双击 exe 就是"什么都没发生"）。
+        return FindRunning(AppDirPanel);
     }
+
+    static string AppDirPanel { get { return Path.Combine(AppDir, PanelScript); } }
 
     static int FindRunning(string panel)
     {
@@ -517,7 +669,7 @@ static class Program
                 }
             }
         }
-        catch { }
+        catch (Exception ex) { Log("FindRunning failed: " + ex.Message); }
         return 0;
     }
 
