@@ -49,15 +49,15 @@ SmartScreen 于是弹「Windows 已保护你的电脑 —— Microsoft Defender 
 2. **先解锁再双击**：右键 exe → 属性 → 勾上「解除锁定」→ 确定。
 3. **命令解锁**（等价于第 2 条）：
    ```powershell
-   Unblock-File -Path "$env:USERPROFILE\Downloads\ClevoHelper-v1.1.exe"
+   Unblock-File -Path "$env:USERPROFILE\Downloads\ClevoHelper-v1.2.exe"
    ```
 
-想确认下载的文件没被掉包，可以先对哈希（`v1.1` 发布附件 `ClevoHelper-v1.1.exe` 的 SHA256，
+想确认下载的文件没被掉包，可以先对哈希（`v1.2` 发布附件 `ClevoHelper-v1.2.exe` 的 SHA256，
 就是 Releases 页面里那个附件摘要）：
 
 ```powershell
-(Get-FileHash "$env:USERPROFILE\Downloads\ClevoHelper-v1.1.exe" -Algorithm SHA256).Hash.ToLower()
-# f448508b159556bac54ab53cbec785855bff892799d9b3a106f1998918443057
+(Get-FileHash "$env:USERPROFILE\Downloads\ClevoHelper-v1.2.exe" -Algorithm SHA256).Hash.ToLower()
+# 9f91da6f705ca4d7085a53cd3f68687c078422a1d8597cc92a9d8fa10827c1d6
 ```
 
 > 注意：**每次重新构建出来的 exe 哈希都不一样**（PE 头里有构建时间戳），所以请以**你下载的那个
