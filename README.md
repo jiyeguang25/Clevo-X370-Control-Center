@@ -1,4 +1,4 @@
-﻿# 蓝天 Clevo X370SN 控制中心（ClevoHelper）
+# 蓝天 Clevo X370SN 控制中心（ClevoHelper）
 
 给**七彩虹将星 X17 Pro Max（蓝天 Clevo X370SN 准系统）**做的 G-Helper 风格控制中心 ——
 **一个 9.5 MB 的 exe**，免安装，温度/风扇/电源模式/风扇曲线/显卡模式/键盘灯/充电上限全在里面。
@@ -35,6 +35,38 @@
 
 > **先决条件是那台机器**：蓝天 Clevo X370SN 准系统（七彩虹将星 X17 Pro Max 等贴牌）。
 > 别的 Clevo 机型**不保证能用**：所有命令字、字节布局都是在这台机器上一项项实测出来的（见[开发笔记](开发笔记.md)）。
+
+### 下载后被 Windows 拦住了？（SmartScreen「已保护你的电脑」）
+
+会。因为这个 exe **没有代码签名证书**，而且浏览器给下载的文件打了一个"来自 Internet"的标记，
+SmartScreen 于是弹「Windows 已保护你的电脑 —— Microsoft Defender SmartScreen 阻止了无法识别的应用启动」，
+按钮还只有「不运行」。
+
+**这不是杀毒引擎报毒**（Defender 的引擎从没把这个 exe 判成威胁），只是"这个发布者我不认识"。
+三种放行办法，任选一种：
+
+1. **在弹窗里**：点「更多信息」→ 下面会出现「仍要运行」。
+2. **先解锁再双击**：右键 exe → 属性 → 勾上「解除锁定」→ 确定。
+3. **命令解锁**（等价于第 2 条）：
+   ```powershell
+   Unblock-File -Path "$env:USERPROFILE\Downloads\ClevoHelper-v1.1.exe"
+   ```
+
+想确认下载的文件没被掉包，可以先对哈希（`v1.1` 发布附件 `ClevoHelper-v1.1.exe` 的 SHA256，
+就是 Releases 页面里那个附件摘要）：
+
+```powershell
+(Get-FileHash "$env:USERPROFILE\Downloads\ClevoHelper-v1.1.exe" -Algorithm SHA256).Hash.ToLower()
+# f448508b159556bac54ab53cbec785855bff892799d9b3a106f1998918443057
+```
+
+> 注意：**每次重新构建出来的 exe 哈希都不一样**（PE 头里有构建时间戳），所以请以**你下载的那个
+> 附件在 Releases 页面显示的摘要**为准 —— 本仓库 `dist\` 下的那份和发布附件是同一份源码编的，
+> 但字节不同。
+
+**唯一的"根治"办法是代码签名**（EV/OV 证书，一年几百到几千块），个人小工具通常不做 ——
+所以要么按上面放行一次，要么**从源码自己构建**（`src\build-exe.ps1`，本机生成的文件没有那个网络标记，
+不会被拦）。程序**不联网**、不写注册表以外的地方，放行前也可以先看[它不做什么](#它不做什么重要)。
 
 ---
 
