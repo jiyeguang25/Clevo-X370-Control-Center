@@ -216,6 +216,10 @@ static class Program
     // 的普通 Create 仍然成功**，被拒的是这个"带启动信息（ShowWindow）"的变体（当前 Windows 版本/
     // 策略下如此）。现在改用原生 CreateProcess + CREATE_NO_WINDOW：不经过 WMI、不需要任何特权，
     // 效果一样（控制台程序连控制台窗口都不会建），少一层依赖，也就少一种起不来的可能。
+    // 2026-10-01（第二轮）用户又报"三种启动方式都失败"，这次根因是输出重定向那层 cmd 包装，
+    // 见 StartHidden 的注释；顺带把 WMI 兜底整条删了（它在用户机上只会回"拒绝访问"）。
+    // 危险点：STARTUPINFO 里的 string 字段必须保持非 null，Marshal.SizeOf 才能正确布局；
+    // 结构体本身不要改成 class。
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct STARTUPINFO
     {
@@ -239,23 +243,60 @@ static class Program
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
     [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
     const uint CREATE_NO_WINDOW = 0x08000000;
+    const int STARTF_USESTDHANDLES = 0x00000100;   // 把子进程的 stdout/stderr 接到我们给的句柄
 
     /// <summary>用 CreateProcess 起子进程；noWindow=true 时连控制台都不建（= 老的 ShowWindow=0 效果）。
-    /// 起完盯 6 秒：如果它这么快就退出了，把退出码写进日志 —— "双击没反应"最常见的原因就是
-    /// 子进程其实起来了但立刻自己退了（退出码 0 = 它自己决定退，比如"已经有实例在跑"）。</summary>
-    static void StartNative(string cmd, string workDir, bool noWindow)
+    /// logPath 不为 null 时，用 STARTF_USESTDHANDLES 把子进程的 stdout/stderr 接到这个文件
+    /// （取代以前那层 `cmd /c 包装.cmd`，见 StartHidden 的注释）。
+    /// 起完盯 6 秒：这么快就退出且**退出码非 0** 才算这条启动方式失败；退出码 0 一律视为成功
+    /// （子进程自己决定退出，典型是"已经有面板在跑，把显示请求交出去就退"）。</summary>
+    static void StartNative(string cmd, string workDir, bool noWindow, string logPath)
     {
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
         if (noWindow) si.dwFlags = 1;                 // STARTF_USESHOWWINDOW
         si.wShowWindow = 0;                           // SW_HIDE
+
+        FileStream logFs = null;
+        IntPtr hLog = IntPtr.Zero;
+        if (!string.IsNullOrEmpty(logPath))
+        {
+            try
+            {
+                logFs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                hLog = logFs.SafeFileHandle.DangerousGetHandle();
+                si.dwFlags |= STARTF_USESTDHANDLES;   // = 0x100
+                si.hStdOutput = hLog;
+                si.hStdError = hLog;
+                si.hStdInput = IntPtr.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log("打开 panel-start.log 失败(" + ex.Message + ")，这次不重定向输出");
+                if (logFs != null) { logFs.Dispose(); logFs = null; }
+                hLog = IntPtr.Zero;
+                si.dwFlags = noWindow ? 1 : 0;
+            }
+        }
+
         PROCESS_INFORMATION pi;
         uint flags = noWindow ? CREATE_NO_WINDOW : 0;
-        if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, workDir, ref si, out pi))
+        bool started;
+        int err;
+        try
         {
-            int err = Marshal.GetLastWin32Error();
-            throw new Exception("CreateProcess failed, Win32Error=" + err);
+            // bInheritHandles 必须为 true，否则子进程拿不到那个日志句柄
+            started = CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, hLog != IntPtr.Zero, flags,
+                                    IntPtr.Zero, workDir, ref si, out pi);
+            err = started ? 0 : Marshal.GetLastWin32Error();
         }
+        finally
+        {
+            // 句柄已经复制进子进程，父进程这份可以关了
+            if (logFs != null) logFs.Dispose();
+        }
+        if (!started) throw new Exception("CreateProcess failed, Win32Error=" + err);
+
         Log("child pid=" + pi.dwProcessId);
         uint w = WaitForSingleObject(pi.hProcess, 6000);
         if (w == 0)
@@ -456,88 +497,55 @@ static class Program
     }
 
     /// <summary>
-    /// 起一个**完全不显示窗口**的面板进程：首选 CreateProcess + CREATE_NO_WINDOW，
-    /// 失败再退到普通 CreateProcess，最后才用 WMI（详见下面那段注释）。
+    /// 起一个**完全不显示窗口**的面板进程，并把它的 stdout/stderr 落到
+    /// artifacts\panel-start.log（面板自己起不来时，那份日志是唯一的线索）。
     /// </summary>
+    /// <remarks>
+    /// 这里以前先用 `cmd.exe /c "artifacts\start-panel.cmd"` 包一层来做重定向，**已经删掉**：
+    /// 2026-10-01 用户双击 exe 弹 "三种启动方式都失败: CreateProcess(CREATE_NO_WINDOW): /
+    /// CreateProcess: child exited within 6s, exit code=1 / WMI: 拒绝访问"，面板完全起不来。
+    /// 实测根因就在那层包装：`cmd /c "xxx.cmd"` 里嵌套引号会让 cmd 走 "命令是带引号的字符串"
+    /// 那条分支，整条命令行（含里面的引号）被当成程序名，cmd 立刻以 1 退出 ——
+    /// 同一条命令不走包装直接 CreateProcess 退出码是 0。也就是说：包装层不但没帮上忙，
+    /// 还把两条本来能用的路一起带崩了。
+    /// 现在用 STARTF_USESTDHANDLES 把子进程的 stdout/stderr 直接接到 panel-start.log 文件句柄，
+    /// 不经过 cmd.exe、不产生中间文件、不闪窗口，也少一层可能出错的引号解析。
+    /// WMI 那条兜底同样删掉：它要 Win32_ProcessStartup（ShowWindow=0），在用户机上就是
+    /// "拒绝访问"，留着只会把日志搞得更乱；没有哪个场景只剩它能用。
+    /// </remarks>
     static void StartHidden(string cmd, string workDir)
     {
-        // 三条路依次试，任何一条成功就返回。为什么要有三条：
-        // 2026-10-01 用户双击 exe 弹 "ClevoHelper failed to start: ManagementException: 拒绝访问"，
-        // 面板完全起不来 —— 卡在 WMI 那条路（Win32_Process.Create + Win32_ProcessStartup.ShowWindow=0）。
-        // 实测：不带 ProcessStartupInformation 的普通 WMI Create 仍然成功，被拒的是"带启动信息"的变体。
-        // 现在首选原生 CreateProcess + CREATE_NO_WINDOW（不经过 WMI、不需要特权，且同样不建控制台窗口），
-        // WMI 只作兜底；三条全失败才抛，并把每条的错误写进 launcher.log 供排查。
-        string e1 = null, e2 = null, e3 = null;
-        // 子进程的输出必须留下来：面板进程如果自己起来就退了（例如脚本报错），
-        // 以前这里是完全静默的 —— 用户和排查者都只能看到"双击没反应"。
-        // 做法：把启动命令写成一个临时 .cmd（内部重定向 stdout/stderr 到 panel-start.log），
-        // 再 CreateProcess 这个 .cmd。**不要**在命令行里拼 `cmd /c "..." > log`：
-        // 那层引号在 cmd 眼里是字面量，会 17ms 就退出（这条我自己踩过）。
         string artDir = Path.Combine(Path.GetDirectoryName(AppDir), "artifacts");
         string logFile = Path.Combine(artDir, "panel-start.log");
-        string cmdFile = Path.Combine(artDir, "start-panel.cmd");
-        bool haveWrapper = false;
         try
         {
             Directory.CreateDirectory(artDir);
-            File.WriteAllText(cmdFile,
-                "@echo off\r\nrem 由 ClevoHelper.exe 生成；面板的 stdout/stderr 都进 panel-start.log\r\n" +
-                cmd + " >> \"" + logFile + "\" 2>&1\r\n",
-                new System.Text.UTF8Encoding(false));
-            haveWrapper = true;
+            // 每次启动重开一份，否则旧内容会和这次混在一起
+            File.WriteAllText(logFile, "=== panel start " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
+                                       " ===\r\n", new System.Text.UTF8Encoding(false));
         }
-        catch (Exception ex) { Log("写 start-panel.cmd 失败: " + ex.Message); }
-        if (haveWrapper)
-        {
-            try
-            {
-                StartNative("cmd.exe /c \"" + cmdFile + "\"", workDir, true);
-                Log("started via cmd wrapper + CREATE_NO_WINDOW (输出见 artifacts\\panel-start.log)");
-                return;
-            }
-            catch (Exception ex) { e1 = ex.Message; Log("cmd wrapper failed: " + e1); }
-        }
+        catch (Exception ex) { Log("准备 panel-start.log 失败: " + ex.Message); }
 
         try
         {
-            StartNative(cmd, workDir, true);
-            Log("started via CreateProcess(CREATE_NO_WINDOW)");
+            StartNative(cmd, workDir, true, logFile);
+            Log("started via CreateProcess + redirected output (日志见 artifacts\\panel-start.log)");
             return;
         }
-        catch (Exception ex) { e2 = ex.Message; Log("CreateProcess(CREATE_NO_WINDOW) failed: " + e2); }
+        catch (Exception ex) { Log("CreateProcess(带日志重定向) failed: " + ex.Message); }
 
+        // 极端情况（日志文件被占用/被安全软件挡住）退到不带重定向的版本：少一份日志，
+        // 但面板本身照样起来 —— 不能因为"日志写不了"就让用户用不了程序。
         try
         {
-            StartNative(cmd, workDir, false);
-            Log("started via CreateProcess (no CREATE_NO_WINDOW, may flash a console). previous: " + e2);
+            StartNative(cmd, workDir, true, null);
+            Log("started via CreateProcess(CREATE_NO_WINDOW, 无日志重定向)");
             return;
         }
-        catch (Exception ex) { e3 = ex.Message; Log("CreateProcess failed: " + e3); }
+        catch (Exception ex) { Log("CreateProcess(CREATE_NO_WINDOW) failed: " + ex.Message); }
 
-        try
-        {
-            using (ManagementClass mc = new ManagementClass("Win32_Process"))
-            using (ManagementClass sc = new ManagementClass("Win32_ProcessStartup"))
-            using (ManagementBaseObject inParams = mc.GetMethodParameters("Create"))
-            using (ManagementBaseObject startup = sc.CreateInstance())
-            {
-                startup["ShowWindow"] = (ushort)0;                 // SW_HIDE
-                inParams["CommandLine"] = cmd;
-                inParams["CurrentDirectory"] = workDir;
-                inParams["ProcessStartupInformation"] = startup;
-                using (ManagementBaseObject outParams = mc.InvokeMethod("Create", inParams, null))
-                {
-                    uint rc = (uint)outParams["ReturnValue"];
-                    if (rc != 0) throw new Exception("Win32_Process.Create failed, ReturnValue=" + rc);
-                }
-            }
-            Log("started via WMI (fallback)");
-            return;
-        }
-        catch (Exception ex) { e3 = ex.Message; Log("WMI fallback failed: " + e3); }
-
-        throw new Exception("三种启动方式都失败：\r\n  CreateProcess(CREATE_NO_WINDOW): " + e1 +
-                            "\r\n  CreateProcess: " + e2 + "\r\n  WMI: " + e3);
+        StartNative(cmd, workDir, false, null);
+        Log("started via CreateProcess(无 CREATE_NO_WINDOW)");
     }
 
     // --- start -------------------------------------------------------------------
@@ -728,6 +736,29 @@ if ($code -ne 0 -or -not (Test-Path -LiteralPath $exe)) {
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 $fi = Get-Item -LiteralPath $exe
+
+# ----------------------------------------------------------------- 签名 ---
+# 必须在"部署到本机"之前签：%LOCALAPPDATA%\ClevoHelper\ClevoHelper.exe 是直接从这份
+# 产物复制过去的，签完再复制，两份才都是签过名的。
+# 为什么要签：未签名 + 无信誉的 exe，Windows 会弹「已保护你的电脑 / 发布者: 发布者未知」
+# （见 tools\Sign-DshApp.ps1 开头的说明）。签名工具在 DSH\tools\ 下，跨项目共用；
+# 证书不存在时这里只提示、不算构建失败（缺工具链不该拦住 exe 的构建）。
+$signer = Join-Path (Split-Path $root -Parent) 'tools\Sign-DshApp.ps1'
+if (Test-Path -LiteralPath $signer) {
+    Write-Host 'sign:'
+    # 真证书（SSL.com 学生包那张）到手后，不用改这个脚本：把它的主题关键字写进环境变量
+    #   setx DSH_CODESIGN_FILTER "SSL.com"
+    # 签名工具会自动优先用它，不再用本机自签名那张。没设就还是走自签名兜底。
+    $signArgs = @('-Path', $fi.FullName)
+    if ($env:DSH_CODESIGN_FILTER) {
+        $signArgs += @('-CertSubjectFilter', $env:DSH_CODESIGN_FILTER)
+        Write-Host ('  使用真证书, 主题关键字: ' + $env:DSH_CODESIGN_FILTER)
+    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $signer @signArgs
+    if ($LASTEXITCODE -ne 0) { Write-Host '  签名失败（exe 仍然可用，只是会继续弹 SmartScreen）' }
+} else {
+    Write-Host ('  signer missing: {0} —— 跳过签名' -f $signer)
+}
 
 # ------------------------------------------------- 部署到本机（可重复）---
 # 构建产物落在 dist\，但**用户实际运行的那一份**在 %LOCALAPPDATA%\ClevoHelper\ClevoHelper.exe：
