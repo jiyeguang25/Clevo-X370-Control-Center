@@ -346,6 +346,10 @@ $script:FanCurveSource = 'default'   # settings / ec / default —— 只用于�
 $script:FanAppliedOnStart = $false   # 启动时"按我的配置写回 EC"只做一次
 $script:StartupConfigRestored = $false   # 电源/风扇模式注入只做一次
 $script:StartupChargerChecked = $false    # 充电窗口比对只做一次
+# 请求槽只有一份（见 Test-ReqSlotFree），所以每**条**启动注入都得单独记住"发过没有"：
+$script:StartupPowerIssued = $false       # 电源模式那条已定下来（发过，或 EC 本来就是你要的）
+$script:StartupFanModeIssued = $false     # 风扇模式那条已定下来（发过，或 EC 本来就是你要的）
+$script:StartupMiscWanted = $false        # 为了比对充电窗口而点亮"读一次杂项"，只点一次
 
 # 曲线上的每个数都必须是 Step(5) 的倍数：界面上只能按 5 加减，所以**读进来的值一律先吸附**，
 # 否则会冒出一个点不出来的数（比如 38%、59%、86°C）。
@@ -1568,9 +1572,20 @@ try {
 }
 catch { $script:Sync.StartState = $null; Write-Dbg ('start state failed: ' + $_.Exception.Message) }
 
+# ---- 请求槽只有一个：启动注入必须排队，不能"同一轮里连发两个" ------------------------
+# $script:Sync.Pending 是**一个**槽，采样器 runspace 每轮循环只取走一个请求（采样器里
+# `$req = $S.Pending; $S.Pending = $null`）。所以同一个 Update-Panel 轮次里连发两个请求，
+# 第二个会把第一个**直接顶掉**，第一个永远不会执行；而启动注入全是"发过就不再发"的
+# （$script:LedRestored / $script:FanAppliedOnStart / …），被顶掉就等于这件事从没发生过。
+# 凡启动注入，发之前先问这一句：槽不空就什么都不做，等下一次重画（约 400ms 后）再发。
+# 2026-10-06 用户报的"开机不注入键盘灯、要手动点一下关闭灯光"就是这个 bug：
+#   15:38:07.645 LED restore（发 Request-Led）→ 23ms 后 15:38:07.668 风扇曲线写回（发
+#   Request-FanCurve）→ LED 请求被覆盖，而 $script:LedRestored 早已置位 → 永不重发。
+function Test-ReqSlotFree { return ($null -eq $script:Sync.Pending) }
+
 function Request-Write {
-    param([int]$Mode, [string]$Kind)
-    $script:Sync.Pending = [pscustomobject]@{ Mode = $Mode; Kind = $Kind; At = (Get-Date) }
+    param([int]$Mode, [string]$Kind, [switch]$Startup)
+    $script:Sync.Pending = [pscustomobject]@{ Mode = $Mode; Kind = $Kind; Startup = [bool]$Startup; At = (Get-Date) }
     if ($Kind -eq 'restore') { $n.StatusText.Text = '正在恢复初始设置…' } else { $n.StatusText.Text = '正在切换…' }
 }
 
@@ -1663,6 +1678,7 @@ function Request-Rgb {
 # One "current selection" drives everything: picking a colour or a speed re-sends the whole
 # selection, so the effect changes colour live instead of needing a "apply" button.
 function Request-Led {
+    param([switch]$Startup)
     $sel = $script:LedSel
     # The wheel's colour wins only while the user is in "custom" mode: clicking a preset
     # swatch clears UseCustom, so the two ways of choosing a colour never fight.
@@ -1675,6 +1691,7 @@ function Request-Led {
     $c2 = $script:RgbPills[[int]$sel.Color2]
     $script:Sync.Pending = [pscustomobject]@{
         Kind = 'led'
+        Startup = [bool]$Startup
         Mode = [string]$sel.Mode
         ModeLabel = [string]$script:LedModePills[[int]$sel.ModeIdx].Label
         # No mode offered here is directional or two-coloured any more, so these stay at their
@@ -1698,8 +1715,8 @@ function Request-Led {
 # One request kind with a Sub field, because the four channels behind it are unrelated
 # (DCHU byte frame, DCHU cmd 0x19, registry+hotkey, WMI). The sampler owns the write and
 # the read-back, exactly like every other control in this panel.
-function Request-Misc([string]$Sub, $Value) {
-    $script:Sync.Pending = [pscustomobject]@{ Kind = 'misc'; Sub = $Sub; Value = $Value; At = (Get-Date) }
+function Request-Misc([string]$Sub, $Value, [switch]$Startup) {
+    $script:Sync.Pending = [pscustomobject]@{ Kind = 'misc'; Sub = $Sub; Value = $Value; Startup = [bool]$Startup; At = (Get-Date) }
     $what = switch ($Sub) {
         'charger'  { '电池充电' }
         'start'    { '充电开始电量' }
@@ -1998,10 +2015,11 @@ try {
 catch { Write-Dbg ('about avatar failed: ' + $_.Exception.Message) }
 
 function Request-FanCurve {
+    param([switch]$Startup)
     # sends the current 自定义 node values (percent) - no preset index any more
     $src = $script:FanCustom
     $script:Sync.Pending = [pscustomobject]@{
-        Kind = 'curve'; Label = '自定义'
+        Kind = 'curve'; Label = '自定义'; Startup = [bool]$Startup
         T2 = [int]$src.T2; D2 = [int]$src.D2; T3 = [int]$src.T3; D3 = [int]$src.D3
         D1 = [int]$script:FixedFirstDuty; At = (Get-Date)
     }
@@ -2359,6 +2377,11 @@ $sampler = {
             }
             catch {
                 $S.LastWrite = [pscustomobject]@{ Ok = $false; Msg = ('写入失败: ' + $_.Exception.Message); At = (Get-Date) }
+            }
+            # 启动注入的结果必须落盘：开机那次到底写没写、成功没有，以前日志里查不到
+            # （LastWrite 只在界面和自检里被读），2026-10-06 这次排查就卡在这里。
+            if ($req.Startup -and $S.LastWrite) {
+                Add-Content -LiteralPath $S.LogPath -Value ('STARTUP {0}: ok={1}  {2}' -f $req.Kind, $S.LastWrite.Ok, $S.LastWrite.Msg) -ErrorAction SilentlyContinue
             }
         }
 
@@ -2829,6 +2852,11 @@ function Update-Panel {
                 Write-Dbg 'LED restore: 键盘灯层还没就绪，等下一次重画再注入'
             }
         }
+        elseif (-not (Test-ReqSlotFree)) {
+            # 请求槽被占（这一轮重画里已经有请求发出去了，开机时就是下面"风扇曲线写回"那块）：
+            # 现在发会被顶掉，而 $script:LedRestored 一旦置位就再也不会重发 —— 见 Test-ReqSlotFree
+            # 上面的说明。这里的正确动作是**什么都不做**，等下一轮重画（约 400ms 后）再发。
+        }
         else {
             $script:LedRestored = $true
             $offered = @($script:LedModePills | ForEach-Object { $_.Key })
@@ -2872,7 +2900,7 @@ function Update-Panel {
             if ($mode -and ($offered -contains $mode)) {
                 Write-Dbg ('LED restore: 把上次的键盘灯注入回键盘（来源={0} 模式={1} 亮度={2} 速度={3}）' -f `
                     $from, $mode, $script:LedSel.Bright, $script:LedSel.Speed)
-                Request-Led
+                Request-Led -Startup
             }
             elseif ($mode) { Write-Dbg ('LED restore: EC/配置里的模式 {0} 面板不提供，跳过注入' -f $mode) }
             else { Write-Dbg 'LED restore: 没有任何可注入的键盘灯配置（键盘保持原样）' }
@@ -2884,28 +2912,48 @@ function Update-Panel {
     # 每一项都走面板平时的写入通道（带读回校验）。你上次在面板里点的是什么，这里就套什么 ——
     # 所以想留在"自动"，就在面板里点一下「自动」，它就成了你的配置。
     if (-not $script:StartupConfigRestored -and $script:Settings.Saved -and $null -ne $script:Sync.Snapshot) {
-        $script:StartupConfigRestored = $true
         $sv = $script:Settings.Saved
         $did = New-Object System.Collections.ArrayList
-        if ($null -ne $sv.PowerMode -and $null -ne $s.PowerMode -and [int]$sv.PowerMode -ne [int]$s.PowerMode) {
-            Write-Dbg ('STARTUP config: 电源模式 EC={0} 你的配置={1} → 按配置写回' -f $s.PowerMode, $sv.PowerMode)
-            Request-Write -Mode ([int]$sv.PowerMode) -Kind 'power'
-            [void]$did.Add(('电源→{0}' -f $sv.PowerMode))
+        # 一轮重画最多发一个请求（请求槽只有一个）：发完 $slot 就变 $false，剩下的条目下一轮再发
+        $slot = Test-ReqSlotFree
+        if (-not $script:StartupPowerIssued -and $null -ne $sv.PowerMode -and $null -ne $s.PowerMode) {
+            if ([int]$sv.PowerMode -eq [int]$s.PowerMode) { $script:StartupPowerIssued = $true }   # EC 已经是你要的
+            elseif ($slot) {
+                Write-Dbg ('STARTUP config: 电源模式 EC={0} 你的配置={1} → 按配置写回' -f $s.PowerMode, $sv.PowerMode)
+                Request-Write -Mode ([int]$sv.PowerMode) -Kind 'power' -Startup
+                $script:StartupPowerIssued = $true
+                $slot = $false
+                [void]$did.Add(('电源→{0}' -f $sv.PowerMode))
+            }
         }
-        if ($null -ne $sv.FanMode -and $null -ne $s.FanMode -and [int]$sv.FanMode -ne [int]$s.FanMode) {
-            Write-Dbg ('STARTUP config: 风扇模式 EC={0} 你的配置={1} → 按配置写回' -f $s.FanMode, $sv.FanMode)
-            Request-Write -Mode ([int]$sv.FanMode) -Kind 'fan'
-            [void]$did.Add(('风扇→{0}' -f $sv.FanMode))
+        if (-not $script:StartupFanModeIssued -and $null -ne $sv.FanMode -and $null -ne $s.FanMode) {
+            if ([int]$sv.FanMode -eq [int]$s.FanMode) { $script:StartupFanModeIssued = $true }      # EC 已经是你要的
+            elseif ($slot) {
+                Write-Dbg ('STARTUP config: 风扇模式 EC={0} 你的配置={1} → 按配置写回' -f $s.FanMode, $sv.FanMode)
+                Request-Write -Mode ([int]$sv.FanMode) -Kind 'fan' -Startup
+                $script:StartupFanModeIssued = $true
+                $slot = $false
+                [void]$did.Add(('风扇→{0}' -f $sv.FanMode))
+            }
         }
-        # 充电窗口要读一次 EC 才能比（那份状态平时只在杂项页可见时才读）
-        if ($null -ne $sv.ChargerEnabled) { $script:Sync.NeedFullMisc = $true }
+        # 充电窗口要读一次 EC 才能比（那份状态平时只在杂项页可见时才读）—— 只点亮一次
+        if ($null -ne $sv.ChargerEnabled -and -not $script:StartupMiscWanted) {
+            $script:StartupMiscWanted = $true
+            $script:Sync.NeedFullMisc = $true
+        }
         if ($did.Count) { Write-Dbg ('STARTUP config: 已按你的配置注入 {0}' -f ($did -join '、')) }
-        elseif ($null -eq $sv.ChargerEnabled) { Write-Dbg 'STARTUP config: EC 和你保存的配置一致，无需注入' }
+        # 两条都定下来（按配置写过 / EC 本来就是你要的）才算这块做完，否则下一轮重画接着做
+        $cfgDone = (($script:StartupPowerIssued -or $null -eq $sv.PowerMode) -and
+                    ($script:StartupFanModeIssued -or $null -eq $sv.FanMode))
+        if ($cfgDone) {
+            $script:StartupConfigRestored = $true
+            if (-not $did.Count -and $null -eq $sv.ChargerEnabled) { Write-Dbg 'STARTUP config: EC 和你保存的配置一致，无需注入' }
+        }
     }
     # 充电窗口：等杂项那次读取回来（WantMisc 是上面为了比较才点亮的），不一致才写
     if (-not $script:StartupChargerChecked -and $script:Settings.Saved -and
         $null -ne $script:Settings.Saved.ChargerEnabled -and
-        $null -ne $s.Misc -and $null -ne $s.Misc.ChargerStart) {
+        $null -ne $s.Misc -and $null -ne $s.Misc.ChargerStart -and (Test-ReqSlotFree)) {
         $script:StartupChargerChecked = $true
         $sv = $script:Settings.Saved
         $mi = $s.Misc
@@ -2921,7 +2969,7 @@ function Update-Panel {
             Request-Misc -Sub 'charger' -Value ([pscustomobject]@{
                     Mode = $(if ($wantOn) { 'custom' } else { 'max' })
                     Start = [int]$sv.ChargerStart; Stop = [int]$sv.ChargerStop
-                })
+                }) -Startup
         }
         else { Write-Dbg ('STARTUP config: 充电窗口和你的配置一致（{0}-{1}%），无需注入' -f $mi.ChargerStart, $mi.ChargerStop) }
     }
@@ -2962,7 +3010,7 @@ function Update-Panel {
     # 处于自定义模式（6）时**。你选了自动/最大，就说明你要它自己的逻辑，这时候绝不插手
     # （否则"重启一次风扇又变回自定义"会变成另一种烦人）。每次启动只做一次。
     if (-not $script:FanAppliedOnStart -and $script:FanCurveSource -eq 'settings' -and
-        $s.FanMode -eq 6 -and $s.RuntimeT) {
+        $s.FanMode -eq 6 -and $s.RuntimeT -and (Test-ReqSlotFree)) {
         $script:FanAppliedOnStart = $true
         $same = ($s.RuntimeRaw[1] -eq (Convert-DutyPctToRaw $script:FanCustom.D2) -and
                  $s.RuntimeRaw[2] -eq (Convert-DutyPctToRaw $script:FanCustom.D3) -and
@@ -2973,7 +3021,7 @@ function Update-Panel {
             Write-Dbg ('fan curve: 启动时按你的配置写回 EC（EC 现在是 {0}°C/{1}% {2}°C/{3}%，你的配置是 {4}°C/{5}% {6}°C/{7}%）' -f `
                 $s.RuntimeT[1], $s.RuntimeD[1], $s.RuntimeT[2], $s.RuntimeD[2],
                 $script:FanCustom.T2, $script:FanCustom.D2, $script:FanCustom.T3, $script:FanCustom.D3)
-            Request-FanCurve
+            Request-FanCurve -Startup
         }
     }
     # the node editor is only live while the EC is actually running a custom table (mode 6) -
@@ -4461,9 +4509,33 @@ function Test-RebootAsk {
     catch { Write-Dbg ('REBOOT-PROMPT FAILED: ' + $_.Exception.Message) }
 }
 
+# ---- 合盖/睡眠恢复后重新注入键盘灯 ------------------------------------------------
+# 现象：合上盖子再打开，键盘灯回到蓝色/彩虹，得手动点一次「关闭灯光」才回来。
+# 原因：灯效注入是"每个进程只做一次"（$script:LedRestored 一置位就不再重发，见 2848 行那块），
+#       而 EC 在 S3 恢复时会把键盘灯打回它自己的开机状态（就是冷启动那套"先彩虹后蓝"），
+#       程序里又没有任何电源事件处理，所以醒来后没人再注入。
+# 判据：定时器 400ms 一跳、采样器整轮 0.5-0.7s，正常两跳间隔远小于 45s；一旦 ≥45s，
+#       只可能是系统停摆过（S3/S4、现代待机被冻结）。窗口被锁/负载高都不会到这个量级。
+#       不用 PowerModeChanged 是因为它在 S0ix 现代待机下会漏事件，而"时间差"骗不了人。
+# 动作：把 $script:LedRestored 置回 $false，下一轮 Update-Panel 就会照常排队重新注入
+#       （走和开机完全相同的那条路径，成功/失败照样落盘成 STARTUP led: ok=…）。
+$script:LastTickAt = $null
+$script:ResumeGapSeconds = 45
+function Test-ResumeGap {
+    $now = Get-Date
+    $prev = $script:LastTickAt
+    $script:LastTickAt = $now
+    if ($null -eq $prev) { return }
+    $gap = ($now - $prev).TotalSeconds
+    if ($gap -lt $script:ResumeGapSeconds) { return }
+    Write-Dbg ('RESUME: 系统停摆 {0:N0} 秒（睡眠/休眠恢复），重新注入键盘灯' -f $gap)
+    $script:LedRestored = $false
+    $script:LedRestoreWaited = $false
+}
+
 $script:Timer = New-Object System.Windows.Threading.DispatcherTimer
 $script:Timer.Interval = [TimeSpan]::FromMilliseconds(400)
-$script:Timer.Add_Tick({ $null = Test-Sampler; Update-Panel; Test-ShowRequest; Test-RebootAsk })
+$script:Timer.Add_Tick({ $null = Test-Sampler; Test-ResumeGap; Update-Panel; Test-ShowRequest; Test-RebootAsk })
 $script:Timer.Start()
 
 # 第二次双击 EXE 时，启动器会写一个 show.request 文件（见 build-exe.ps1 的 ActivateExisting）。
