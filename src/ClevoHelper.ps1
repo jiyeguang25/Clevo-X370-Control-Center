@@ -211,21 +211,6 @@ try {
     }
 }
 catch { }
-function Save-Settings {
-    try {
-        # -Depth 8：FanCurve / Led / Saved 都是嵌套的哈希表，默认深度会把里面那层丢掉
-        # （写出去只剩一个空对象）。Saved 里面还嵌着充电窗口，所以要更深。
-        ($script:Settings | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
-    }
-    catch { Write-Dbg ('settings save failed: ' + $_.Exception.Message) }
-}
-# "我的配置"里的一项改了 → 立刻存（用户要求：每次更改后保存，下次开机注入）
-function Save-MyConfig([string]$Key, $Value) {
-    if (-not $script:Settings.Saved) { $script:Settings.Saved = @{} }
-    $script:Settings.Saved[$Key] = $Value
-    Save-Settings
-    Write-Dbg ('my config saved: {0} = {1}' -f $Key, $Value)
-}
 # -StartHidden 只在启动器要求时生效；设置里的开关决定"双击启动"要不要也收进托盘。
 # 例外：-SelfTest 时必须让窗口真的显示出来 —— 自检里有几处是"真点按钮"（Invoke-Click 走
 # RaiseEvent），而控件不在**已显示**的可视树里时 RaiseEvent 不会触发处理器（实测见
@@ -233,24 +218,26 @@ function Save-MyConfig([string]$Key, $Value) {
 $script:StartToTray = ($StartHidden -or [bool]$script:Settings.StartToTray) -and (-not $SelfTest) -and (-not $SizeProbe)
 
 $script:LogPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\monitor-debug.log'
-function Write-Dbg([string]$m) {
-    try {
-        # create the log directory on demand: when running from the packaged exe the whole
-        # tree lives under %LOCALAPPDATA%\ClevoHelper and the artifacts folder does not
-        # exist yet - Add-Content would throw and the panel would log NOTHING, silently.
-        $dir = Split-Path $script:LogPath -Parent
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        # keep the log bounded: a repeating error would otherwise grow it forever
-        $fi = Get-Item -LiteralPath $script:LogPath -ErrorAction SilentlyContinue
-        if ($fi -and $fi.Length -gt 1MB) {
-            $keep = Get-Content -LiteralPath $script:LogPath -Tail 200 -ErrorAction SilentlyContinue
-            Set-Content -LiteralPath $script:LogPath -Value $keep -Encoding UTF8
-            Add-Content -LiteralPath $script:LogPath -Value '(log truncated at 1 MB)' -Encoding UTF8
-        }
-        Add-Content -LiteralPath $script:LogPath -Value ("{0}  {1}" -f (Get-Date).ToString('HH:mm:ss.fff'), $m) -Encoding UTF8
-    }
-    catch { }
-}
+
+# ---- 分模块：按功能拆到 panel-*.ps1 ------------------------------------------
+# 这些文件不是"模块"，是**同一份脚本的续页**：dot-source 进来以后共享同一个
+# 作用域（$script: 变量、$n 控件表、函数互相可见）。所以拆分只改变"在哪个文件里
+# 找代码"，不改变"代码怎么跑"——要改哪个功能，就开对应的那个文件。
+# 函数在**调用时**才解析，所以这些文件的先后顺序不影响功能；新增文件记得加进
+# build-exe.ps1 的 $scripts 清单（否则打包时不会被带进 exe）。
+$script:PanelModules = @(
+    'panel-core.ps1',
+    'panel-fan.ps1',
+    'panel-led.ps1',
+    'panel-mode.ps1',
+    'panel-about.ps1',
+    'panel-paint.ps1',
+    'panel-sampler.ps1',
+    'panel-tray.ps1',
+    'panel-reboot.ps1',
+    'panel-selftest.ps1'
+)
+foreach ($m in $script:PanelModules) { . (Join-Path $PSScriptRoot $m) }
 
 # ---------------------------------------------------------------- 关于页 ----
 # 头像和署名沿用用户另一个工具（SICAU-AutoLogin 校园网自动认证）里的"我的信息"：同一张头像、
@@ -267,6 +254,11 @@ $script:AppName = 'ClevoHelper'
 $script:AppVersion = '1.3'
 $script:AuthorName = '极夜光'
 $script:AuthorMail = 'yeguang225@outlook.com'
+
+# 检查更新用的仓库（owner/repo）。换仓库只改这一行 —— README 的下载链接、发布脚本、
+# 关于页的"检查更新"都以它为准。**只在用户点按钮时发一次请求**：这是个控制风扇/EC 的
+# 工具，装完就该安静待在托盘里；启动时联网既拖慢冷启动，也让"离线也能用"变成空话。
+$script:UpdateRepo = 'jiyeguang25/Clevo-X370-Control-Center'
 
 # 关于页的信息行。**只放别处看不到的东西**（用户要求）：机型在标题栏、开机自启在杂项页、
 # 显卡在状态/性能页、内存和处理器在状态页、EC 通道在底部状态栏 —— 这些这里都不再重复，
@@ -356,45 +348,6 @@ $script:StartupPowerIssued = $false       # 电源模式那条已定下来（发
 $script:StartupFanModeIssued = $false     # 风扇模式那条已定下来（发过，或 EC 本来就是你要的）
 $script:StartupMiscWanted = $false        # 为了比对充电窗口而点亮"读一次杂项"，只点一次
 
-# 曲线上的每个数都必须是 Step(5) 的倍数：界面上只能按 5 加减，所以**读进来的值一律先吸附**，
-# 否则会冒出一个点不出来的数（比如 38%、59%、86°C）。
-function Snap-FanValue([int]$Value, [int]$Min, [int]$Max) {
-    $st = [int]$script:FanLimits.Step
-    $v = [int]([Math]::Round($Value / $st) * $st)
-    if ($v -lt $Min) { $v = [int]([Math]::Ceiling($Min / $st) * $st) }
-    if ($v -gt $Max) { $v = [int]([Math]::Floor($Max / $st) * $st) }
-    return [int]$v
-}
-function Set-FanCustomSafe([hashtable]$src) {
-    # 四个数一起收，顺手保证 节点2温度 < 节点3温度、节点2转速 <= 节点3转速 ——
-    # 这两种"界面点不出来"的状态如果被写进编辑器，加减按钮的夹取会让它卡住不动。
-    $lim = $script:FanLimits
-    $t2 = Snap-FanValue ([int]$src.T2) $lim.TMin $lim.TMax
-    $t3 = Snap-FanValue ([int]$src.T3) $lim.TMin $lim.TMax
-    $d2 = Snap-FanValue ([int]$src.D2) $lim.DMin $lim.DMax
-    $d3 = Snap-FanValue ([int]$src.D3) $lim.DMin $lim.DMax
-    if ($t3 -le $t2) {
-        # 两个温度撞在一起时把 T3 抬上去；抬不动（T2 已经顶到上限）就把 T2 压下来 ——
-        # 否则会留下"节点2 温度 == 节点3 温度"这种界面上点不出来的状态。
-        $t3 = [Math]::Min($lim.TMax, $t2 + $lim.Step)
-        if ($t3 -le $t2) { $t2 = [Math]::Max($lim.TMin, $t3 - $lim.Step) }
-    }
-    if ($d3 -lt $d2) { $d3 = $d2 }
-    $script:FanCustom.T2 = $t2
-    $script:FanCustom.D2 = $d2
-    $script:FanCustom.T3 = $t3
-    $script:FanCustom.D3 = $d3
-    return $script:FanCustom
-}
-function Save-FanCurve {
-    $script:Settings.FanCurve = @{
-        T2 = [int]$script:FanCustom.T2; D2 = [int]$script:FanCustom.D2
-        T3 = [int]$script:FanCustom.T3; D3 = [int]$script:FanCustom.D3
-    }
-    Save-Settings
-    # 存下来了，界面上那行提示就该改口叫"你保存的曲线"（说的必须是真的）
-    $script:FanCurveSource = 'settings'
-}
 # 启动时就用"我的配置"（如果有），并把它标记成已就绪，免得第一次采样又把 EC 的当前值搬进来
 if ($script:Settings.FanCurve) {
     [void](Set-FanCustomSafe $script:Settings.FanCurve)
@@ -444,23 +397,6 @@ try {
 catch {
     $script:GpuPills = @()
     Write-Dbg ('gpu mode probe failed: ' + $_.Exception.Message)
-}
-
-function New-PillXaml([string]$prefix, $pills, [int]$minW = 70) {
-    # MinWidth + centred text instead of per-pill Padding: 自动 / 强冷 / 均衡 are
-    # different lengths, and content-sized pills made every row look ragged. With a
-    # fixed MinWidth all pills in a group are the same size and line up in columns.
-    # The keyboard mode row passes a smaller width so its 9 modes still fit on one line.
-    $sb = New-Object System.Text.StringBuilder
-    $i = 0
-    foreach ($p in $pills) {
-        $tip = if ($p.ContainsKey('Tip')) { ' ToolTip="' + $p.Tip + '"' } else { '' }
-        [void]$sb.AppendLine(('<Border x:Name="{0}{1}" Background="#FF262A33" CornerRadius="13" MinWidth="{2}" Padding="0,5" Margin="0,0,7,0" Cursor="Hand"{3}>' -f $prefix, $i, $minW, $tip))
-        [void]$sb.AppendLine(('  <TextBlock x:Name="{0}{1}T" Text="{2}" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>' -f $prefix, $i, $p.Label))
-        [void]$sb.AppendLine('</Border>')
-        $i++
-    }
-    $sb.ToString()
 }
 
 # Keyboard LED swatches. Writes go through kbled.ps1 (ITE 829x, HID feature reports).
@@ -534,14 +470,6 @@ $script:AutostartPills = @(
     @{ On = $false; Label = '关' },
     @{ On = $true;  Label = '开' }
 )
-# What the keyboard tab is currently set to. The LED hardware reports nothing back, so this
-# session-side state is what the UI shows; the AppSettings mirror is the verification.
-# default colour indices are looked up by label: inserting 彩虹 at the front shifted every
-# index, and a hardcoded number would silently point at a different colour
-function Get-RgbIndex([string]$label) {
-    for ($i = 0; $i -lt $script:RgbPills.Count; $i++) { if ($script:RgbPills[$i].Label -eq $label) { return $i } }
-    return 0
-}
 $script:LedSel = @{
     Mode    = 'static'
     ModeIdx = 1      # index into $script:LedModePills (1 = 静态)
@@ -558,42 +486,6 @@ $script:LedSel = @{
 $script:LedConfigSource = 'default'   # settings / ec / default —— 只用于提示与日志
 $script:LedRestored = $false          # 启动时"把上次的灯注入回去"只做一次
 
-# ---- 键盘灯：存下来 + 开机注入回去 -------------------------------------------
-# 用户报："键盘灯每次都会重置"。原因是**灯控芯片断电就忘**：EC 的 AppSettings 镜像还在
-# （page 2 那套 Status/Effect 字节，重启后读得到），但面板以前只是把镜像读出来**显示**，
-# 从来没有把它发回键盘 —— 所以每次开机键盘都是灭的，UI 却显示"静态/白"。
-# 现在：你每次改灯（Request-Led）就存进 settings.json；启动时按下面的顺序**注入一次**：
-#   ① settings.json 里的 Led（你在面板里最后调的那套）
-#   ② 没有就用 EC 镜像里那套（原厂/以前设过的，重启后仍然在）
-#   ③ 都没有，或者那个模式不是面板提供的五个 → 什么都不发（不猜、不动键盘）
-function Save-LedConfig {
-    $s = $script:LedSel
-    $script:Settings.Led = @{
-        Mode = [string]$s.Mode; Color = [int]$s.Color; Rainbow = [bool]$s.Rainbow
-        UseCustom = [bool]$s.UseCustom
-        R = [int]$s.Custom.R; G = [int]$s.Custom.G; B = [int]$s.Custom.B
-        Bright = [int]$s.Bright; Speed = [int]$s.Speed
-    }
-    Save-Settings
-    $script:LedConfigSource = 'settings'
-}
-function Set-LedSelFromConfig($cfg) {
-    # 把一份配置（settings 里的 Led 对象，或 EC 镜像解出来的东西）填进 LedSel
-    for ($i = 0; $i -lt $script:LedModePills.Count; $i++) {
-        if ($script:LedModePills[$i].Key -eq [string]$cfg.Mode) { $script:LedSel.ModeIdx = $i; $script:LedSel.Mode = [string]$cfg.Mode; break }
-    }
-    $script:LedSel.Rainbow = [bool]$cfg.Rainbow
-    if ($null -ne $cfg.R -and $cfg.UseCustom) {
-        $script:LedSel.UseCustom = $true
-        $script:LedSel.Custom = @{ R = [int]$cfg.R; G = [int]$cfg.G; B = [int]$cfg.B }
-    }
-    elseif ($null -ne $cfg.Color) {
-        $script:LedSel.UseCustom = $false
-        $script:LedSel.Color = [int]$cfg.Color
-    }
-    if ($null -ne $cfg.Bright -and [int]$cfg.Bright -ge 0 -and [int]$cfg.Bright -lt $script:RgbBrightness.Count) { $script:LedSel.Bright = [int]$cfg.Bright }
-    if ($null -ne $cfg.Speed -and [int]$cfg.Speed -ge 0 -and [int]$cfg.Speed -lt $script:LedSpeedPills.Count) { $script:LedSel.Speed = [int]$cfg.Speed }
-}
 # 启动时就先把"我的灯"装进 LedSel，并标记已同步 —— 免得第一次采样又被 EC 镜像覆盖掉
 if ($script:Settings.Led -and $script:Settings.Led.Mode) {
     Set-LedSelFromConfig $script:Settings.Led
@@ -642,77 +534,6 @@ try {
         ($script:ChargerInfo.StartOptions -join ','), ($script:ChargerInfo.StopOptions -join ','))
 }
 catch { Write-Dbg ('flexicharger probe failed: ' + $_.Exception.Message) }
-
-function New-SwatchXaml([string]$prefix, $pills) {
-    # A swatch is either a solid colour or the 彩虹 entry ($RainbowSwatch), which gets a real
-    # gradient brush so it reads as "multi-colour" rather than as one more colour.
-    # 24px + a 5px gap: at the portrait width the content column is 326px wide and the panel
-    # offers 10 swatches, so 26+7 (=330) did not fit and the last ones slid under the row's
-    # hint text. Measured after the change: 10 x 29 = 290.
-    $sb = New-Object System.Text.StringBuilder
-    $i = 0
-    foreach ($p in $pills) {
-        if ($p.Swatch -eq $script:RainbowSwatch) {
-            [void]$sb.AppendLine(('<Border x:Name="{0}{1}" Width="24" Height="24" CornerRadius="12" Margin="0,0,5,0" Cursor="Hand" ToolTip="{2}">' -f $prefix, $i, $p.Label))
-            [void]$sb.AppendLine('  <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,0">')
-            [void]$sb.AppendLine('    <GradientStop Color="#FFFF3B30" Offset="0"/><GradientStop Color="#FFFFD60A" Offset="0.2"/>')
-            [void]$sb.AppendLine('    <GradientStop Color="#FF32D74B" Offset="0.4"/><GradientStop Color="#FF64D2FF" Offset="0.6"/>')
-            [void]$sb.AppendLine('    <GradientStop Color="#FF0A84FF" Offset="0.8"/><GradientStop Color="#FFBF5AF2" Offset="1"/>')
-            [void]$sb.AppendLine('  </LinearGradientBrush></Border.Background>')
-            [void]$sb.AppendLine('</Border>')
-        }
-        else {
-            [void]$sb.AppendLine(('<Border x:Name="{0}{1}" Width="24" Height="24" CornerRadius="12" Background="{2}" Margin="0,0,5,0" Cursor="Hand" ToolTip="{3}"/>' -f $prefix, $i, $p.Swatch, $p.Label))
-        }
-        $i++
-    }
-    $sb.ToString()
-}
-
-function New-SwitchRowXaml([string]$prefix, [string]$label, $pills, [string]$hint, [int]$pillW = 46) {
-    # label + pill pair + a SHORT note to the right of the buttons (user request).
-    # It has been in both shapes now, and the rule that makes the right-hand column safe is
-    # simply that the note stays short: the content column is 326px, two pills take 106px,
-    # which leaves ~210px - about 17 Chinese characters at 11px. The earlier version of this
-    # row used full sentences ('系统 NumLock（原厂无 EC 通道，走系统按键）', ~240px) and the
-    # text landed on top of the 关 pill (measured: hint x=191, pills 105..204).
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('            <Grid Margin="0,0,0,9">')
-    [void]$sb.AppendLine('              <Grid.ColumnDefinitions>')
-    [void]$sb.AppendLine('                <ColumnDefinition Width="66"/>')
-    [void]$sb.AppendLine('                <ColumnDefinition Width="*"/>')
-    [void]$sb.AppendLine('                <ColumnDefinition Width="Auto"/>')
-    [void]$sb.AppendLine('              </Grid.ColumnDefinitions>')
-    [void]$sb.AppendLine(('              <TextBlock Grid.Column="0" Text="{0}" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>' -f $label))
-    [void]$sb.AppendLine(('              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="{0}Row">' -f $prefix))
-    [void]$sb.Append((New-PillXaml $prefix $pills $pillW))
-    [void]$sb.AppendLine('              </StackPanel>')
-    [void]$sb.AppendLine(('              <TextBlock Grid.Column="2" Text="{0}" Foreground="#FF5A6273" FontSize="11" VerticalAlignment="Center" ToolTip="{1}"/>' -f $hint, $hint))
-    [void]$sb.AppendLine('            </Grid>')
-    $sb.ToString()
-}
-
-function New-StepperXaml([string]$prefix, [string]$caption) {
-    # − value unit + stepper.
-    # The number sits right-aligned in a FIXED 34px box and the unit left-aligned in its own
-    # 22px box (monospace). Centre-aligning "60 °C" / "100 °C" in one box made the digits and
-    # the ± buttons slide sideways as the value changed - measured, not guessed.
-    @"
-              <StackPanel Orientation="Horizontal" Margin="0,0,20,0" VerticalAlignment="Center">
-                <TextBlock Text="$caption" Foreground="#FF5A6273" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <Border x:Name="${prefix}Minus" Background="#FF262A33" CornerRadius="11" MinWidth="26" Padding="0,3" Cursor="Hand">
-                  <TextBlock Text="&#x2212;" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
-                </Border>
-                <TextBlock x:Name="${prefix}Val" Text="--" Foreground="#FFD7DCE6" FontFamily="Consolas" FontSize="13"
-                           Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
-                <TextBlock x:Name="${prefix}Unit" Text="$([char]0x00B0)C" Foreground="#FF6B7385" FontFamily="Consolas" FontSize="11"
-                           Width="22" TextAlignment="Left" VerticalAlignment="Center" Margin="3,0,3,0"/>
-                <Border x:Name="${prefix}Plus" Background="#FF262A33" CornerRadius="11" MinWidth="26" Padding="0,3" Cursor="Hand">
-                  <TextBlock Text="+" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
-                </Border>
-              </StackPanel>
-"@
-}
 
 # ---------------------------------------------------------------- 色盘 -------
 # A real colour wheel for the keyboard page: angle = hue, radius = saturation, V fixed at 1
@@ -779,29 +600,6 @@ public static int[] Pick(double x, double y, int size) {
 }
 
 $script:WheelSize = 170
-function New-ColorWheelBitmap([int]$size) {
-    $bmp = New-Object System.Windows.Media.Imaging.WriteableBitmap($size, $size, 96, 96, ([System.Windows.Media.PixelFormats]::Bgra32), $null)
-    $px = [ClevoHelper.ColorWheel]::Pixels($size)
-    $bmp.WritePixels((New-Object System.Windows.Int32Rect(0, 0, $size, $size)), $px, ($size * 4), 0)
-    $bmp.Freeze()
-    return $bmp
-}
-
-
-function New-AboutRowXaml([string]$name, [string]$label) {
-    # 关于页的一行：左侧小标签 + 右侧等宽值（和其它页面同一套列宽，所以标签列也对齐）
-    @"
-            <Grid Margin="0,0,0,6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="$label" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
-              <TextBlock Grid.Column="1" x:Name="$name" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas"
-                         VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-            </Grid>
-"@
-}
 
 # Volume rows are generated so the storage panel adapts to however many drives exist.
 # The 内存 row above them uses the SAME four column widths, so the two bars start at the
@@ -814,27 +612,6 @@ $script:MaxVolumes = 6
 $script:MaxPhysDisks = 4
 $script:BarWidth = 96          # shared by the memory row and the volume rows
 
-function New-VolumeRowXaml([int]$n) {
-    # row 0 starts visible (empty) so the auto-sized window does not jump 25px when the
-    # first storage sample arrives; the paint tick collapses it if the host has no disks
-    $vis = if ($n -eq 0) { 'Visible' } else { 'Collapsed' }
-    @"
-            <Grid x:Name="Vol${n}Row" Margin="0,7,0,0" Visibility="$vis">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="76"/>
-                <ColumnDefinition Width="96"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" x:Name="Vol${n}Name" Text="" Foreground="#FFD7DCE6" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-              <Border Grid.Column="1" Background="#FF262A33" CornerRadius="3" Height="7" VerticalAlignment="Center">
-                <Border x:Name="Vol${n}Bar" Background="#FF57B0FF" CornerRadius="3" Height="7" Width="0" HorizontalAlignment="Left"/>
-              </Border>
-              <TextBlock Grid.Column="2" x:Name="Vol${n}Size" Text="" Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center" Margin="10,0,10,0" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Grid.Column="3" x:Name="Vol${n}Type" Text="" Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center" MinWidth="46" TextAlignment="Right"/>
-            </Grid>
-"@
-}
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -1394,6 +1171,16 @@ $(New-SwitchRowXaml 'Tray' '启动收进托盘' $script:OnOffPills '不弹窗口
 $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.Label })
             </StackPanel>
 
+            <!-- 检查更新：**必须由用户点**，不做后台自动轮询、不做静默下载（一条明确的红线）。
+                 样式沿用本页既有的"Border + Cursor=Hand + MouseLeftButtonUp"，和标签页按钮同一套手感。 -->
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+              <Border x:Name="AboutCheckUpdateBtn" Background="#FF262A33" CornerRadius="6" Padding="10,4" Cursor="Hand">
+                <TextBlock x:Name="AboutCheckUpdateT" Text="检查更新" Foreground="#FFB98BFF" FontSize="11"/>
+              </Border>
+              <TextBlock x:Name="AboutUpdateStatus" Text="" Foreground="#FF8A93A6" FontSize="11"
+                         Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+            </StackPanel>
+
             <TextBlock x:Name="AboutGuardWarn" Foreground="#FFE38A6F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Visibility="Collapsed"
                        Text="--"/>
@@ -1445,6 +1232,7 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'TabBtnPerf', 'TabBtnPerfT', 'TabBtnKb', 'TabBtnKbT', 'TabBtnMisc', 'TabBtnMiscT', 'TabPerf', 'TabKb', 'TabMisc', 'KbHint', 'MiscHint',
     'TabBtnAbout', 'TabBtnAboutT', 'TabAbout', 'AboutAvatarBrush', 'AboutName', 'AboutTitle', 'AboutMail', 'AboutTagline',
     'AboutInfo', 'AboutNote', 'AboutFeatures', 'AboutDisclaimer', 'AboutChannelWarn', 'AboutGuardWarn',
+    'AboutCheckUpdateBtn', 'AboutCheckUpdateT', 'AboutUpdateStatus',
     'LedDirRow', 'LedDirPillRow', 'LedDirHint', 'WheelText2', 'WheelHint',
     'LedModeRow', 'LedColorRow', 'LedColorHint', 'LedSpeedRow',
     'ChargerRow', 'ChargerHint', 'ChargerCustom', 'ChgStartRow', 'ChgStopRow', 'ChgStartLabel', 'ChgStopLabel',
@@ -1476,23 +1264,6 @@ foreach ($r in $script:AboutRows) { $names += ('About_' + $r.Key) }
 for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) { $names += "Dir$i"; $names += "Dir${i}T" }
 foreach ($k in $names) { $n[$k] = $script:Win.FindName($k) }
 
-# 标题栏拖动。**必须放过最小化/关闭按钮**：DragMove() 是一个模态的拖动循环，鼠标按下
-# 之后消息都由它接管 —— 如果按在最小化按钮上还把事件转发给标题栏，随后的
-# MouseLeftButtonUp 就到不了按钮（这正是"最小化点了没反应"的根因；× 是 Down 绑定，
-# 它在冒泡到标题栏之前就已经生效了，所以一直是好的）。
-# 判据用两条：真鼠标点在按钮上（IsMouseOver），以及事件源在按钮子树里（OriginalSource
-# 往上走）—— 后者在自检造合成事件时也成立，不依赖真实光标位置。
-function Test-InTitleButton($src) {
-    if ($n.MinBtn.IsMouseOver -or $n.CloseBtn.IsMouseOver) { return $true }
-    $cur = $src
-    $guard = 0
-    while ($cur -and $guard -lt 40) {
-        $guard++
-        if ($cur -eq $n.MinBtn -or $cur -eq $n.CloseBtn -or $cur -eq $n.TitleIcon) { return $true }
-        try { $cur = [System.Windows.Media.VisualTreeHelper]::GetParent($cur) } catch { $cur = $null }
-    }
-    return $false
-}
 $n.TitleBar.Add_MouseLeftButtonDown({
     if (Test-InTitleButton $_.OriginalSource) { return }
     # 合成事件（自检）里左键并不是真的按下，DragMove 会抛；包起来，别让一个拖动失败把面板带走
@@ -1601,23 +1372,6 @@ elseif (-not $script:ModelIsX370SN) {
 }
 Write-Dbg ('model guard: ok={0} forced={1} why={2}' -f $script:ModelIsX370SN, $script:ModelGuardForced, $script:ModelGuardWhy)
 
-# ---- 请求槽只有一个：启动注入必须排队，不能"同一轮里连发两个" ------------------------
-# $script:Sync.Pending 是**一个**槽，采样器 runspace 每轮循环只取走一个请求（采样器里
-# `$req = $S.Pending; $S.Pending = $null`）。所以同一个 Update-Panel 轮次里连发两个请求，
-# 第二个会把第一个**直接顶掉**，第一个永远不会执行；而启动注入全是"发过就不再发"的
-# （$script:LedRestored / $script:FanAppliedOnStart / …），被顶掉就等于这件事从没发生过。
-# 凡启动注入，发之前先问这一句：槽不空就什么都不做，等下一次重画（约 400ms 后）再发。
-# 2026-10-06 用户报的"开机不注入键盘灯、要手动点一下关闭灯光"就是这个 bug：
-#   15:38:07.645 LED restore（发 Request-Led）→ 23ms 后 15:38:07.668 风扇曲线写回（发
-#   Request-FanCurve）→ LED 请求被覆盖，而 $script:LedRestored 早已置位 → 永不重发。
-function Test-ReqSlotFree { return ($null -eq $script:Sync.Pending) }
-
-function Request-Write {
-    param([int]$Mode, [string]$Kind, [switch]$Startup)
-    $script:Sync.Pending = [pscustomobject]@{ Mode = $Mode; Kind = $Kind; Startup = [bool]$Startup; At = (Get-Date) }
-    if ($Kind -eq 'restore') { $n.StatusText.Text = '正在恢复初始设置…' } else { $n.StatusText.Text = '正在切换…' }
-}
-
 for ($i = 0; $i -lt $script:PowerPills.Count; $i++) {
     $mode = $script:PowerPills[$i].Id
     $n["Pwr$i"].Add_MouseLeftButtonUp({
@@ -1648,39 +1402,6 @@ $n.RevertBtn.Add_MouseLeftButtonUp({ Request-Write -Mode 0 -Kind 'restore' })
 #    就是脚本作用域那个。另外面板启动时会用 AST 静态扫一遍自己：凡是 GetNewClosure 块里出现
 #    `$script:标量 = ...` 就报出来（见 Test-ClosureScopeTrap）。
 $script:GpuStage = 0
-function Set-GpuStage([int]$Mode) {
-    $cur = $(if ($script:Sync.Snapshot) { [int]$script:Sync.Snapshot.GpuMode } else { -1 })
-    $staged = [int]$(if ($script:Sync.Snapshot) { $script:Sync.Snapshot.GpuStaged } else { 0 })
-    # 只有"既没暂存过、点的又是当前模式"才是真的没事可做。**一旦暂存过别的模式，点当前模式
-    # 那一颗就是"撤销暂存"** —— 否则用户暂存了核显又反悔，就只能靠 [恢复初始] 才能拉回来
-    # （自检就撞上了这个：想暂存回独显，点了没反应，最后 EC 里留着的还是核显）。
-    if ($cur -eq $Mode -and $staged -eq 0) {
-        $n.StatusText.Text = ('当前已经是「{0}」，无需切换' -f $script:GpuModeName[$Mode])
-        $n.StatusText.Foreground = Get-Brush '#FF6B7385'
-        return
-    }
-    $script:GpuStage = $Mode
-    $n.GpuNow.Visibility = 'Collapsed'
-    $n.GpuConfirm.Visibility = 'Visible'
-    $n.GpuConfirmText.Text = $(if ($Mode -eq $cur) {
-            ('撤销暂存、回到「{0}」？重启后生效' -f $script:GpuModeName[$Mode])
-        }
-        else { ('切到「{0}」？重启后生效' -f $script:GpuModeName[$Mode]) })
-}
-function Confirm-GpuStage {
-    $m = [int]$script:GpuStage
-    $script:GpuStage = 0
-    $n.GpuConfirm.Visibility = 'Collapsed'
-    $n.GpuNow.Visibility = 'Visible'
-    if ($m -gt 0) { Request-Write -Mode $m -Kind 'gpu' }
-}
-function Cancel-GpuStage {
-    $script:GpuStage = 0
-    $n.GpuConfirm.Visibility = 'Collapsed'
-    $n.GpuNow.Visibility = 'Visible'
-    $n.StatusText.Text = '已取消，没有写入任何东西'
-    $n.StatusText.Foreground = Get-Brush '#FF6B7385'
-}
 for ($i = 0; $i -lt $script:GpuPills.Count; $i++) {
     $mode = $script:GpuPills[$i].Id
     $n["Gpu$i"].Add_MouseLeftButtonUp({ Set-GpuStage $mode }.GetNewClosure())
@@ -1696,71 +1417,6 @@ $n.GpuRebootBtn.Add_MouseLeftButtonUp({
         $n.StatusText.Foreground = Get-Brush '#FF6B7385'
     }
 })
-
-function Request-Rgb {
-    param([int]$R, [int]$G, [int]$B, [int]$Brightness = -1)
-    $script:Sync.Pending = [pscustomobject]@{ Kind = 'rgb'; R = $R; G = $G; B = $B; Brightness = $Brightness; At = (Get-Date) }
-    $n.StatusText.Text = '正在设置键盘灯…（整键盘重绘约 0.3 秒）'
-}
-
-# ---- 键盘灯：模式驱动 ------------------------------------------------------
-# One "current selection" drives everything: picking a colour or a speed re-sends the whole
-# selection, so the effect changes colour live instead of needing a "apply" button.
-function Request-Led {
-    param([switch]$Startup)
-    $sel = $script:LedSel
-    # The wheel's colour wins only while the user is in "custom" mode: clicking a preset
-    # swatch clears UseCustom, so the two ways of choosing a colour never fight.
-    if ($sel.UseCustom) {
-        $c = [pscustomobject]@{ R = [int]$sel.Custom.R; G = [int]$sel.Custom.G; B = [int]$sel.Custom.B }
-    }
-    else {
-        $c = $script:RgbPills[[int]$sel.Color]
-    }
-    $c2 = $script:RgbPills[[int]$sel.Color2]
-    $script:Sync.Pending = [pscustomobject]@{
-        Kind = 'led'
-        Startup = [bool]$Startup
-        Mode = [string]$sel.Mode
-        ModeLabel = [string]$script:LedModePills[[int]$sel.ModeIdx].Label
-        # No mode offered here is directional or two-coloured any more, so these stay at their
-        # defaults and are never edited from the UI - they are still sent because the sampler's
-        # frame builder takes them (kbled.ps1 keeps the full vendor protocol).
-        Dir = [int]$sel.Dir
-        R = [int]$c.R; G = [int]$c.G; B = [int]$c.B
-        R2 = [int]$c2.R; G2 = [int]$c2.G; B2 = [int]$c2.B
-        Rainbow = [bool]$sel.Rainbow
-        Bright = [int]$script:RgbBrightness[[int]$sel.Bright].Level
-        Speed = [int]$script:LedSpeedPills[[int]$sel.Speed].Level
-        At = (Get-Date)
-    }
-    $n.StatusText.Text = ('正在应用键盘灯：{0} …' -f $script:LedModePills[[int]$sel.ModeIdx].Label)
-    # 你按下去的这一套就是"我的键盘灯"：存进 settings.json，下次开机注入回键盘
-    # （灯控芯片断电就忘，这是唯一能让它自己回来的办法 —— 见 Save-LedConfig 上面的说明）
-    Save-LedConfig
-}
-
-# ---- 杂项：每一项都是「写 + 读回」 ------------------------------------------
-# One request kind with a Sub field, because the four channels behind it are unrelated
-# (DCHU byte frame, DCHU cmd 0x19, registry+hotkey, WMI). The sampler owns the write and
-# the read-back, exactly like every other control in this panel.
-function Request-Misc([string]$Sub, $Value, [switch]$Startup) {
-    $script:Sync.Pending = [pscustomobject]@{ Kind = 'misc'; Sub = $Sub; Value = $Value; Startup = [bool]$Startup; At = (Get-Date) }
-    $what = switch ($Sub) {
-        'charger'  { '电池充电' }
-        'start'    { '充电开始电量' }
-        'stop'     { '充电停止电量' }
-        'bright'   { '屏幕亮度' }
-        'touchpad' { '触控板' }
-        'winkey'   { 'Win 键' }
-        'fnlock'   { 'FnLock' }
-        'winfn'    { 'Win/Fn 交换' }
-        'numlock'  { '数字键盘' }
-        default    { $Sub }
-    }
-    $n.StatusText.Text = ('正在设置{0}…' -f $what)
-    $n.StatusText.Foreground = Get-Brush '#FF6B7385'
-}
 
 # 电池充电三选一：最大电量 = 不限制；推荐 = 原厂 70/80；自定义 = 用下面的阈值行。
 # The thresholds travel WITH the request: the sampler runspace has its own copy of the world
@@ -1876,17 +1532,6 @@ for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) {
     $idx = [int]$script:LedDirPills[$i].Idx
     $n["Dir$i"].Add_MouseLeftButtonUp({ $script:LedSel.Dir = $idx; Request-Led }.GetNewClosure())
 }
-# 选了颜色以后该做什么：当前模式用颜色就立刻写，不用（关闭/循环）就只记住并说清楚。
-# 以前无论如何都发一次写入，模式是「关闭」时那就是"点了没反应" —— 现在两种情况都说得明白。
-function Update-LedColorSelection {
-    $mi = [int]$script:LedSel.ModeIdx
-    $mp = $(if ($mi -ge 0 -and $mi -lt $script:LedModePills.Count) { $script:LedModePills[$mi] } else { $script:LedModePills[0] })
-    if ([int]$mp.Colors -ge 1) { Request-Led }
-    else {
-        $n.StatusText.Text = ('已记住颜色；「{0}」不用颜色，切到 静态/波/呼吸 立刻生效' -f $mp.Label)
-        $n.StatusText.Foreground = Get-Brush '#FF8A93A6'
-    }
-}
 
 for ($i = 0; $i -lt $script:RgbPills.Count; $i++) {
     $ci = $i
@@ -1938,16 +1583,6 @@ for ($i = 0; $i -lt $script:LedSpeedPills.Count; $i++) {
 # intermediate positions collapse by themselves (the last one wins) - no throttling needed.
 $n.ColorWheel.Source = New-ColorWheelBitmap $script:WheelSize
 $script:WheelDragging = $false
-function Set-LedFromWheel([double]$x, [double]$y) {
-    $size = [int]$script:WheelSize
-    $p = [ClevoHelper.ColorWheel]::Pick($x, $y, $size)
-    if ($null -eq $p) { return }         # outside the circle: nothing to pick
-    $script:LedSel.Custom = @{ R = [int]$p[0]; G = [int]$p[1]; B = [int]$p[2] }
-    $script:LedSel.UseCustom = $true
-    $script:LedSel.Rainbow = $false      # picking a colour means "not multi-colour"
-    $script:WheelHue = [int]$p[3]; $script:WheelSat = [int]$p[4]
-    Update-LedColorSelection
-}
 $n.ColorWheel.Add_MouseLeftButtonDown({
     $script:WheelDragging = $true
     $pt = $_.GetPosition($n.ColorWheel)
@@ -1967,25 +1602,6 @@ $n.ColorWheel.Add_MouseLeave({ $script:WheelDragging = $false })
 # 「Windows Script Host —— 系统找不到指定的文件 (0x80070002)」。现在改成复制到
 # %LOCALAPPDATA%\ClevoHelper + 候选路径 + 失败静默（见 autostart.ps1 顶部的说明）。
 . (Join-Path $PSScriptRoot 'autostart.ps1')
-function Set-Autostart([bool]$On) {
-    try {
-        if ($On) {
-            $r = Enable-Autostart
-            $where = $(if ($r.Installed) { $r.Installed } else { '(没找到可复制的 exe，启动时会去候选路径里找)' })
-            $n.StatusText.Text = ('开机自启已开启：程序已放到 {0}，下次登录从那里启动、直接进托盘' -f $where)
-        }
-        else {
-            [void](Disable-Autostart)
-            $n.StatusText.Text = '开机自启已关闭。'
-        }
-        $n.StatusText.Foreground = Get-Brush '#FF6FE38A'
-    }
-    catch {
-        $n.StatusText.Text = '设置开机自启失败：' + $_.Exception.Message
-        $n.StatusText.Foreground = Get-Brush '#FFE38A6F'
-    }
-    $script:AutostartOn = Get-AutostartState
-}
 for ($i = 0; $i -lt $script:AutostartPills.Count; $i++) {
     $on = [bool]$script:AutostartPills[$i].On
     $n["Auto$i"].Add_MouseLeftButtonUp({ Set-Autostart -On $on }.GetNewClosure())
@@ -2043,21 +1659,62 @@ try {
 }
 catch { Write-Dbg ('about avatar failed: ' + $_.Exception.Message) }
 
-function Request-FanCurve {
-    param([switch]$Startup)
-    # sends the current 自定义 node values (percent) - no preset index any more
-    $src = $script:FanCustom
-    $script:Sync.Pending = [pscustomobject]@{
-        Kind = 'curve'; Label = '自定义'; Startup = [bool]$Startup
-        T2 = [int]$src.T2; D2 = [int]$src.D2; T3 = [int]$src.T3; D3 = [int]$src.D3
-        D1 = [int]$script:FixedFirstDuty; At = (Get-Date)
+$script:UpdateBusy = $false
+$script:UpdateUrl = $null
+
+$n.AboutCheckUpdateBtn.Add_MouseLeftButtonUp({
+    if ($script:UpdateBusy) { return }
+    $script:UpdateBusy = $true
+    $script:UpdateUrl = $null
+    $n.AboutCheckUpdateT.Text = '检查中…'
+    $n.AboutUpdateStatus.Foreground = Get-Brush '#FF8A93A6'
+    $n.AboutUpdateStatus.Cursor = 'Arrow'
+    $n.AboutUpdateStatus.ToolTip = $null
+    $n.AboutUpdateStatus.Text = '正在连接 GitHub…'
+    # 先把上面这句刷到屏幕上，否则同步请求会把界面连"检查中"一起冻住，看起来像没反应。
+    $script:Win.Dispatcher.Invoke([action] {}, [System.Windows.Threading.DispatcherPriority]::Render)
+    try {
+        $rel = Get-LatestRelease 6000
+        switch ($rel.Kind) {
+            'new' {
+                $script:UpdateUrl = $rel.Url
+                $n.AboutUpdateStatus.Foreground = Get-Brush '#FFE38A6F'
+                $n.AboutUpdateStatus.Cursor = 'Hand'
+                $n.AboutUpdateStatus.Text = ('发现新版本 {0}（当前 v{1}）· 点这里打开下载页' -f $rel.Tag, $script:AppVersion)
+                $n.AboutUpdateStatus.ToolTip = $rel.Url
+            }
+            'older' {
+                $n.AboutUpdateStatus.Text = ('已是最新发布 {0}，本机 v{1} 比它更新（开发版）' -f $rel.Tag, $script:AppVersion)
+            }
+            'same' {
+                $n.AboutUpdateStatus.Text = ('已是最新版本（v{0}）' -f $script:AppVersion)
+            }
+            'norelease' {
+                $n.AboutUpdateStatus.Foreground = Get-Brush '#FFE38A6F'
+                $n.AboutUpdateStatus.Text = '仓库里还没有发布过版本，去 Releases 页面看草稿'
+            }
+            'timeout' {
+                $n.AboutUpdateStatus.Foreground = Get-Brush '#FFE38A6F'
+                $n.AboutUpdateStatus.Text = '检查超时：网络不通或 GitHub 被挡住，稍后再试'
+            }
+            default {
+                $n.AboutUpdateStatus.Foreground = Get-Brush '#FFE38A6F'
+                $n.AboutUpdateStatus.Text = '检查失败：' + $rel.Message
+            }
+        }
+        Write-Dbg ('update check: kind={0} remote={1} local={2}' -f $rel.Kind, $rel.Tag, $script:AppVersion)
     }
-    $script:LedSel.FanIdx = $script:FanCustomIndex
-    # 你按下去的这一套就是"我的配置"：写进 settings.json，下次启动直接用它（不再读 EC 的当前值）
-    Save-FanCurve
-    Save-MyConfig 'FanMode' 6          # 「自定义」这个选择本身也要记住，否则重启后曲线不会被套用
-    $n.StatusText.Text = '正在写风扇曲线「自定义」…（约 1 秒）'
-}
+    finally {
+        $script:UpdateBusy = $false
+        $n.AboutCheckUpdateT.Text = '检查更新'
+    }
+})
+
+# 有新版本时，点那行字直接打开发布页（只在有 URL 时才有反应）。
+$n.AboutUpdateStatus.Add_MouseLeftButtonUp({
+    if ($script:UpdateUrl) { try { Start-Process $script:UpdateUrl } catch { } }
+})
+
 $script:FanCustomIndex = 2   # index of the 自定义 pill
 for ($i = 0; $i -lt $script:FanPills.Count; $i++) {
     $p = $script:FanPills[$i]
@@ -2073,22 +1730,6 @@ for ($i = 0; $i -lt $script:FanPills.Count; $i++) {
     }
 }
 
-# ---- 自定义曲线的四个数字（两个可调节点） ------------------------------------
-# Only editable while 自定义 is the selected fan mode - the rows grey out otherwise, so it is
-# obvious that 自动/最大 ignore them.
-function Step-FanCustom([string]$Field, [int]$Delta) {
-    if ($script:Sync.Snapshot -and $script:Sync.Snapshot.FanMode -ne 6) { return }
-    $lim = $script:FanLimits
-    $v = [int]$script:FanCustom[$Field] + $Delta
-    switch ($Field) {
-        'T2' { $v = [Math]::Max($lim.TMin, [Math]::Min([int]$script:FanCustom.T3 - $lim.Step, $v)) }
-        'T3' { $v = [Math]::Max([int]$script:FanCustom.T2 + $lim.Step, [Math]::Min($lim.TMax, $v)) }
-        'D2' { $v = [Math]::Max($lim.DMin, [Math]::Min([int]$script:FanCustom.D3, $v)) }
-        'D3' { $v = [Math]::Max([int]$script:FanCustom.D2, [Math]::Min($lim.DMax, $v)) }
-    }
-    $script:FanCustom[$Field] = $v
-    Request-FanCurve
-}
 foreach ($f in 'T2', 'D2', 'T3', 'D3') {
     $pre = 'Ct' + $f.Substring(1, 1) + $f.Substring(0, 1)   # T2 -> Ct2T, D3 -> Ct3D
     $field = $f
@@ -2682,796 +2323,12 @@ $sampler = {
     }
 }
 
-function Start-Sampler {
-    <#
-      .SYNOPSIS (Re)create the sampler runspace. Safe to call repeatedly.
-      .NOTES    A runspace that faults or exits leaves the UI showing stale numbers
-                forever, so Update-Panel watches the handle and restarts it.
-    #>
-    $script:Rs = [runspacefactory]::CreateRunspace()
-    $script:Rs.ApartmentState = 'MTA'
-    $script:Rs.ThreadOptions = 'ReuseThread'
-    $script:Rs.Open()
-    $script:Ps = [powershell]::Create()
-    $script:Ps.Runspace = $script:Rs
-    [void]$script:Ps.AddScript($sampler).AddArgument($script:Sync)
-    $script:Handle = $script:Ps.BeginInvoke()
-}
-
-function Test-Sampler {
-    param([switch]$Silent)
-    if ($script:Sync.Stop) { return }
-    if ($null -ne $script:Handle -and $script:Handle.IsCompleted) {
-        if (-not $Silent) { Write-Dbg 'SAMPLER DIED - restarting it' }
-        try { $script:Ps.Stop() } catch { }
-        try { $script:Rs.Close() } catch { }
-        $script:Sync.Snapshot = $null
-        $script:Sync.Hist = @()
-        Start-Sampler
-        $script:Sync.Restarts = 1 + [int]$script:Sync.Restarts
-        $script:Sync.LastWrite = [pscustomobject]@{
-            Ok = $false; At = (Get-Date)
-            Msg = ('采样器曾中断，已自动重启（第 {0} 次）' -f $script:Sync.Restarts)
-        }
-        return $true
-    }
-    return $false
-}
-
 Start-Sampler
 
 # ------------------------------------------------------------------- paint ---
 # Explicit brush conversion: do not rely on implicit string -> Brush coercion in
 # property assignments, it can fail silently inside event handlers.
 $script:BrushCache = @{}
-function Get-Brush([string]$hex) {
-    if (-not $script:BrushCache.ContainsKey($hex)) {
-        $script:BrushCache[$hex] = [Windows.Media.BrushConverter]::new().ConvertFromString($hex)
-    }
-    return $script:BrushCache[$hex]
-}
-
-function Format-GB([double]$bytes) {
-    $gb = $bytes / 1GB
-    if ($gb -ge 1024) { return ('{0:N2} TB' -f ($gb / 1024)) }
-    if ($gb -ge 100) { return ('{0:N0} GB' -f $gb) }
-    return ('{0:N1} GB' -f $gb)
-}
-function Set-Pill($border, $text, [bool]$on, [string]$accent) {
-    if ($on) {
-        $border.Background = Get-Brush $accent
-        $text.Foreground = Get-Brush '#FF11141A'
-        $text.FontWeight = 'SemiBold'
-    }
-    else {
-        $border.Background = Get-Brush '#FF262A33'
-        $text.Foreground = Get-Brush '#FF98A1B3'
-        $text.FontWeight = 'Normal'
-    }
-}
-
-function Update-Panel {
-  try {
-    $s = $script:Sync.Snapshot
-    if ($null -eq $s) {
-        if ($script:Sync.Pending) { $n.StatusText.Text = '正在切换…' }
-        else { $n.StatusText.Text = '等待首次采样…' }
-        return
-    }
-    if ($s.CpuTemp) {
-        $n.CpuTemp.Text = [string]$s.CpuTemp
-        $n.CpuRpm.Text = '{0:N0} RPM' -f $s.CpuFanRpm
-        $n.CpuDutyText.Text = '{0}%' -f $s.CpuFanDuty
-        $n.CpuBar.Width = [Math]::Round(104 * $s.CpuFanDuty / 100)
-        $n.GpuTemp.Text = [string]$s.GpuTemp
-        $n.GpuRpm.Text = '{0:N0} RPM' -f $s.GpuFanRpm
-        $n.GpuDutyText.Text = '{0}%' -f $s.GpuFanDuty
-        $n.GpuBar.Width = [Math]::Round(104 * $s.GpuFanDuty / 100)
-        $script:Win.Title = 'ClevoHelper - {0}C / {1}C' -f $s.CpuTemp, $s.GpuTemp
-    }
-    if ($s.CpuMhz) { $n.CpuFreq.Text = '{0:N2} GHz' -f ($s.CpuMhz / 1000) } else { $n.CpuFreq.Text = '--' }
-    if ($null -ne $s.CpuWatts) { $n.CpuPower.Text = '{0:N0} W' -f $s.CpuWatts } else { $n.CpuPower.Text = '--' }
-    if ($s.GpuMhz) { $n.GpuFreq.Text = '{0:N0} MHz' -f $s.GpuMhz } else { $n.GpuFreq.Text = '--' }
-    if ($null -ne $s.GpuWatts) { $n.GpuPower.Text = '{0:N0} W' -f $s.GpuWatts } else { $n.GpuPower.Text = '--' }
-    if ($null -ne $s.CpuUtil) { $n.CpuUtil.Text = '{0}%' -f $s.CpuUtil } else { $n.CpuUtil.Text = '--' }
-    if ($null -ne $s.GpuUtil) { $n.GpuUtil.Text = '{0}%' -f $s.GpuUtil } else { $n.GpuUtil.Text = '--' }
-    if ($s.GpuModeName) { $n.GpuHeader.Text = 'GPU · RTX 4080 Laptop   ·   显卡模式 ' + $s.GpuModeName }
-    # say where the GPU numbers come from: NVML in-process, or the nvidia-smi fallback
-    $n.GpuHeader.ToolTip = $(if ($s.GpuSensor -eq 'nvml') { 'GPU 数据来自 nvml.dll（进程内直读，不依赖 nvidia-smi 程序）' }
-        elseif ($s.GpuSensor -eq 'smi') { 'GPU 数据来自 nvidia-smi（NVML 不可用时的备用通道）' }
-        else { 'GPU 数据不可用' })
-
-    # ---- 内存 ----
-    $totMB = [int]$script:Sync.TotalRamMB
-    if ($totMB -gt 0 -and $null -ne $s.RamFreeMB) {
-        $usedMB = $totMB - [int]$s.RamFreeMB
-        $pct = [Math]::Max(0, [Math]::Min(100, [Math]::Round(100.0 * $usedMB / $totMB)))
-        $n.MemBar.Width = [Math]::Round($script:BarWidth * $pct / 100)
-        # portrait: the long '已用 x / y GB · 可用 z GB' no longer fits on one line, so the
-        # row shows the used/total part and keeps the whole sentence in the tooltip
-        $n.MemText.Text = '已用 {0:N1} / {1:N1} GB' -f ($usedMB / 1024), ($totMB / 1024)
-        $n.MemText.ToolTip = '已用 {0:N1} GB / 共 {1:N1} GB   ·   可用 {2:N1} GB' -f ($usedMB / 1024), ($totMB / 1024), ($s.RamFreeMB / 1024)
-        $n.MemPct.Text = '{0}%' -f $pct
-        # bar and percentage share one colour code: violet normally, amber >= 75%, orange >= 90%
-        $memColor = if ($pct -ge 90) { '#FFE38A6F' } elseif ($pct -ge 75) { '#FFE3C86F' } else { '#FFB98BFF' }
-        $n.MemBar.Background = Get-Brush $memColor
-        $n.MemPct.Foreground = Get-Brush $memColor
-    }
-    else { $n.MemBar.Width = 0; $n.MemText.Text = '--'; $n.MemPct.Text = '' }
-
-    # ---- 存储 ----
-    $vols = @($s.Volumes)
-    for ($i = 0; $i -lt $script:MaxVolumes; $i++) {
-        $row = $n["Vol${i}Row"]
-        if ($i -lt $vols.Count) {
-            $v = $vols[$i]
-            $row.Visibility = 'Visible'
-            $lbl = if ($v.Label) { "$($v.Name)  $($v.Label)" } else { $v.Name }
-            $n["Vol${i}Name"].Text = $lbl
-            $n["Vol${i}Name"].ToolTip = $lbl
-            $used = $v.Total - $v.Free
-            $pct = if ($v.Total -gt 0) { [Math]::Round(100.0 * $used / $v.Total) } else { 0 }
-            $n["Vol${i}Bar"].Width = [Math]::Round($script:BarWidth * $pct / 100)
-            $barColor = if ($pct -ge 90) { '#FFE38A6F' } elseif ($pct -ge 75) { '#FFE3C86F' } else { '#FF57B0FF' }
-            $n["Vol${i}Bar"].Background = Get-Brush $barColor
-            # portrait form: '414 / 954 GB'; the sentence with 可用 is the tooltip
-            $n["Vol${i}Size"].Text = '{0} / {1}' -f (Format-GB $used), (Format-GB $v.Total)
-            $n["Vol${i}Size"].ToolTip = '已用 {0} / {1}   ·   可用 {2}' -f (Format-GB $used), (Format-GB $v.Total), (Format-GB $v.Free)
-            $n["Vol${i}Type"].Text = '{0}%' -f $pct
-            $n["Vol${i}Type"].Foreground = Get-Brush $barColor
-        }
-        else { $row.Visibility = 'Collapsed' }
-    }
-    $pd = @($script:Sync.PhysDisks)
-    if ($pd.Count) {
-        $n.PhysDiskText.Text = '物理磁盘 {0}: ' -f $pd.Count
-        $n.PhysDiskText.Text += (($pd | ForEach-Object { '{0} {1}' -f $_.Model, (Format-GB ($_.GB * 1GB)) }) -join '   ·   ')
-    }
-
-    $powerActive = ''
-    for ($i = 0; $i -lt $script:PowerPills.Count; $i++) {
-        $on = ($null -ne $s.PowerMode -and $s.PowerMode -eq $script:PowerPills[$i].Id)
-        if ($on) { $powerActive = $script:PowerPills[$i].Label }
-        Set-Pill $n["Pwr$i"] $n["Pwr${i}T"] $on '#FF57B0FF'
-    }
-    $kbActive = ''
-    $kbOffered = $false
-    if ($s.LedMode) {
-        for ($i = 0; $i -lt $script:LedModePills.Count; $i++) {
-            if ($script:LedModePills[$i].Key -eq $s.LedMode) { $kbActive = $script:LedModePills[$i].Label; $kbOffered = $true; break }
-        }
-        # the EC can hold a mode this panel no longer offers (e.g. 波浪 set by the factory
-        # app) - name it from the full table rather than leaving the strip blank
-        if (-not $kbOffered -and $script:LedModeLabelAll.ContainsKey([string]$s.LedMode)) {
-            $kbActive = $script:LedModeLabelAll[[string]$s.LedMode]
-        }
-    }
-    # Sync the keyboard-tab selection with the EC's persisted mode ONCE, on the first
-    # snapshot. Without this the pills claimed 静态 while the strip (reading the real
-    # AppSettings) said 波浪 - two different answers to the same question on one screen.
-    # After the first sync our own clicks drive it; the strip keeps showing EC truth.
-    if (-not $script:LedSynced -and $s.LedMode) {
-        $found = $false
-        for ($i = 0; $i -lt $script:LedModePills.Count; $i++) {
-            if ($script:LedModePills[$i].Key -eq $s.LedMode) { $script:LedSel.ModeIdx = $i; $script:LedSel.Mode = $s.LedMode; $found = $true; break }
-        }
-        # EC holds a mode this panel does not offer: light NO pill rather than lighting a
-        # wrong one, and remember the real mode so the footer can say so
-        if (-not $found) { $script:LedSel.ModeIdx = -1; $script:LedSel.Mode = [string]$s.LedMode }
-        if ($s.LedColor) {
-            for ($i = 0; $i -lt $script:RgbPills.Count; $i++) {
-                $c = $script:RgbPills[$i]
-                if ($c.R -eq $s.LedColor[0] -and $c.G -eq $s.LedColor[1] -and $c.B -eq $s.LedColor[2]) { $script:LedSel.Color = $i; break }
-            }
-        }
-        $script:LedSynced = $true
-    }
-
-    # ---- 启动时把上次的键盘灯**注入回键盘** --------------------------------------
-    # 键盘灯是硬件会忘的东西：断电后灯控芯片里的状态没了，而 EC 的 AppSettings 镜像还在。
-    # 面板以前只读镜像**显示**、从不发回键盘，所以每次开机灯都是灭的（用户报的"每次都会重置"）。
-    # 取值顺序：settings.json 里你最后调的那套 → EC 镜像那套 → 都不动键盘。
-    # 每个进程只做一次；模式必须是面板提供的五个之一（否则没有对应的 UI 状态，宁可不发）。
-    # 等 KbReady：键盘灯那一层是采样器在启动时加载的，没加载就发不了（那时先等下一次重画，
-    # 别把这个"只做一次"的机会浪费掉 —— 否则键盘会一直是灭的）。
-    if (-not $script:LedRestored -and $null -ne $script:Sync.Snapshot) {
-        if (-not $script:Sync.KbReady) {
-            if (-not $script:LedRestoreWaited) {
-                $script:LedRestoreWaited = $true
-                Write-Dbg 'LED restore: 键盘灯层还没就绪，等下一次重画再注入'
-            }
-        }
-        elseif (-not (Test-ReqSlotFree)) {
-            # 请求槽被占（这一轮重画里已经有请求发出去了，开机时就是下面"风扇曲线写回"那块）：
-            # 现在发会被顶掉，而 $script:LedRestored 一旦置位就再也不会重发 —— 见 Test-ReqSlotFree
-            # 上面的说明。这里的正确动作是**什么都不做**，等下一轮重画（约 400ms 后）再发。
-        }
-        else {
-            $script:LedRestored = $true
-            $offered = @($script:LedModePills | ForEach-Object { $_.Key })
-            $mode = ''; $from = ''
-            if ($script:Settings.Led -and $script:Settings.Led.Mode) {
-                $mode = [string]$script:Settings.Led.Mode
-                $from = 'settings.json'
-            }
-            elseif ($s.LedMode) {
-                $mode = [string]$s.LedMode
-                $from = 'EC 镜像'
-                # EC 镜像只给了模式和一个 RGB（没有色块下标），所以要**反推**用户当时选的是什么。
-                # 关键一条：彩虹（多色）不是颜色值，帧里走的是固件自己的调色板（0xA1→0x71），
-                # 而镜像里存的 R/G/B 就是当时传的值 —— 选彩虹时那个值是 0/0/0（彩虹色块本身没有 RGB）。
-                # 所以：模式支持彩虹 + 镜像颜色是 0/0/0 → 那是"彩虹"，不能当"黑色单色"再发一遍
-                # （我第一版就是那样，结果把键盘注入成"波动 + 纯黑"，等于没亮）。
-                $pill = $(if ($script:LedSel.ModeIdx -ge 0) { $script:LedModePills[$script:LedSel.ModeIdx] } else { $null })
-                $supportsRainbow = ($null -ne $pill -and [bool]$pill.Rainbow)
-                $col = $s.LedColor
-                $isBlack = ($null -eq $col) -or ([int]$col[0] -eq 0 -and [int]$col[1] -eq 0 -and [int]$col[2] -eq 0)
-                if ($supportsRainbow -and $isBlack) {
-                    $rainbowIdx = 0
-                    for ($i = 0; $i -lt $script:RgbPills.Count; $i++) { if ($script:RgbPills[$i].ContainsKey('Rainbow')) { $rainbowIdx = $i; break } }
-                    $script:LedSel.Rainbow = $true
-                    $script:LedSel.UseCustom = $false
-                    $script:LedSel.Color = $rainbowIdx
-                    Write-Dbg 'LED restore: 镜像里是 0/0/0 + 该模式支持彩虹 → 按"彩虹"恢复（固件调色板）'
-                }
-                else {
-                    $script:LedSel.Rainbow = $false
-                    if ($col) {
-                        Set-LedSelFromConfig @{
-                            Mode = $mode; Rainbow = $false; UseCustom = $true
-                            R = [int]$col[0]; G = [int]$col[1]; B = [int]$col[2]
-                            Bright = $script:LedSel.Bright; Speed = $script:LedSel.Speed; Color = $null
-                        }
-                    }
-                }
-                $script:LedConfigSource = 'ec'
-            }
-            if ($mode -and ($offered -contains $mode)) {
-                Write-Dbg ('LED restore: 把上次的键盘灯注入回键盘（来源={0} 模式={1} 亮度={2} 速度={3}）' -f `
-                    $from, $mode, $script:LedSel.Bright, $script:LedSel.Speed)
-                Request-Led -Startup
-            }
-            elseif ($mode) { Write-Dbg ('LED restore: EC/配置里的模式 {0} 面板不提供，跳过注入' -f $mode) }
-            else { Write-Dbg 'LED restore: 没有任何可注入的键盘灯配置（键盘保持原样）' }
-        }
-    }
-    # ---- 启动时把"我的配置"注入回去：电源模式 / 风扇模式 / 充电窗口 ------------------
-    # 用户要求："每次我更改后保存，下次开机时自动注入我上次保存的东西"。
-    # 规则：**只注入和 EC 现在不一样的那些**（一样的就不写，免得每次开机都无谓地写 EC）；
-    # 每一项都走面板平时的写入通道（带读回校验）。你上次在面板里点的是什么，这里就套什么 ——
-    # 所以想留在"自动"，就在面板里点一下「自动」，它就成了你的配置。
-    if (-not $script:StartupConfigRestored -and $script:Settings.Saved -and $null -ne $script:Sync.Snapshot) {
-        $sv = $script:Settings.Saved
-        $did = New-Object System.Collections.ArrayList
-        # 一轮重画最多发一个请求（请求槽只有一个）：发完 $slot 就变 $false，剩下的条目下一轮再发
-        $slot = Test-ReqSlotFree
-        if (-not $script:StartupPowerIssued -and $null -ne $sv.PowerMode -and $null -ne $s.PowerMode) {
-            if ([int]$sv.PowerMode -eq [int]$s.PowerMode) { $script:StartupPowerIssued = $true }   # EC 已经是你要的
-            elseif ($slot) {
-                Write-Dbg ('STARTUP config: 电源模式 EC={0} 你的配置={1} → 按配置写回' -f $s.PowerMode, $sv.PowerMode)
-                Request-Write -Mode ([int]$sv.PowerMode) -Kind 'power' -Startup
-                $script:StartupPowerIssued = $true
-                $slot = $false
-                [void]$did.Add(('电源→{0}' -f $sv.PowerMode))
-            }
-        }
-        if (-not $script:StartupFanModeIssued -and $null -ne $sv.FanMode -and $null -ne $s.FanMode) {
-            if ([int]$sv.FanMode -eq [int]$s.FanMode) { $script:StartupFanModeIssued = $true }      # EC 已经是你要的
-            elseif ($slot) {
-                Write-Dbg ('STARTUP config: 风扇模式 EC={0} 你的配置={1} → 按配置写回' -f $s.FanMode, $sv.FanMode)
-                Request-Write -Mode ([int]$sv.FanMode) -Kind 'fan' -Startup
-                $script:StartupFanModeIssued = $true
-                $slot = $false
-                [void]$did.Add(('风扇→{0}' -f $sv.FanMode))
-            }
-        }
-        # 充电窗口要读一次 EC 才能比（那份状态平时只在杂项页可见时才读）—— 只点亮一次
-        if ($null -ne $sv.ChargerEnabled -and -not $script:StartupMiscWanted) {
-            $script:StartupMiscWanted = $true
-            $script:Sync.NeedFullMisc = $true
-        }
-        if ($did.Count) { Write-Dbg ('STARTUP config: 已按你的配置注入 {0}' -f ($did -join '、')) }
-        # 两条都定下来（按配置写过 / EC 本来就是你要的）才算这块做完，否则下一轮重画接着做
-        $cfgDone = (($script:StartupPowerIssued -or $null -eq $sv.PowerMode) -and
-                    ($script:StartupFanModeIssued -or $null -eq $sv.FanMode))
-        if ($cfgDone) {
-            $script:StartupConfigRestored = $true
-            if (-not $did.Count -and $null -eq $sv.ChargerEnabled) { Write-Dbg 'STARTUP config: EC 和你保存的配置一致，无需注入' }
-        }
-    }
-    # 充电窗口：等杂项那次读取回来（WantMisc 是上面为了比较才点亮的），不一致才写
-    if (-not $script:StartupChargerChecked -and $script:Settings.Saved -and
-        $null -ne $script:Settings.Saved.ChargerEnabled -and
-        $null -ne $s.Misc -and $null -ne $s.Misc.ChargerStart -and (Test-ReqSlotFree)) {
-        $script:StartupChargerChecked = $true
-        $sv = $script:Settings.Saved
-        $mi = $s.Misc
-        $wantOn = ([int]$sv.ChargerEnabled -ne 0)
-        $nowOn = ([int]$mi.ChargerStart -gt 0 -or [int]$mi.ChargerStop -gt 0)
-        $same = ($wantOn -eq $nowOn)
-        if ($wantOn -and $same) {
-            $same = ([int]$mi.ChargerStart -eq [int]$sv.ChargerStart -and [int]$mi.ChargerStop -eq [int]$sv.ChargerStop)
-        }
-        if (-not $same) {
-            Write-Dbg ('STARTUP config: 充电窗口 EC={0}/{1}（启用={2}）你的配置={3}/{4}（启用={5}）→ 按配置写回' -f `
-                $mi.ChargerStart, $mi.ChargerStop, $nowOn, $sv.ChargerStart, $sv.ChargerStop, $wantOn)
-            Request-Misc -Sub 'charger' -Value ([pscustomobject]@{
-                    Mode = $(if ($wantOn) { 'custom' } else { 'max' })
-                    Start = [int]$sv.ChargerStart; Stop = [int]$sv.ChargerStop
-                }) -Startup
-        }
-        else { Write-Dbg ('STARTUP config: 充电窗口和你的配置一致（{0}-{1}%），无需注入' -f $mi.ChargerStart, $mi.ChargerStop) }
-    }
-    # ---- 风扇：三颗按钮，自定义只在 EC 模式 6 时亮 ----
-    # The curve presets are gone, so a pill no longer needs to be matched against block 13:
-    # 自动 = mode 0, 最大 = mode 1, 自定义 = mode 6 (whatever table is loaded).
-    $fanActive = ''
-    for ($i = 0; $i -lt $script:FanPills.Count; $i++) {
-        $p = $script:FanPills[$i]
-        if ($p.ContainsKey('Curve')) {
-            $on = ($s.FanMode -eq 6)
-            if ($on) { $fanActive = $p.Label; if ([int]$script:LedSel.FanIdx -ne $i) { $script:LedSel.FanIdx = $i } }
-        }
-        else {
-            $on = ($null -ne $s.FanMode -and $s.FanMode -eq [int]$p.Mode)
-            if ($on) { $fanActive = $p.Label; if ([int]$script:LedSel.FanIdx -ne $i) { $script:LedSel.FanIdx = $i } }
-        }
-        Set-Pill $n["Fan$i"] $n["Fan${i}T"] $on '#FF6FE38A'
-    }
-    # 只有在"用户还没配过自己的曲线"时，才从 EC 的当前表读一次作为编辑器的起点 —— 而且
-    # **吸附到 5 的倍数**（EC 里是 60/38、86/59 这种值，界面上点不出来）。
-    # 用户配过的话，启动时就已经用他那份了（FanSeeded 早就是 $true）。
-    if (-not $script:FanSeeded -and $s.RuntimeT) {
-        [void](Set-FanCustomSafe @{
-                T2 = [int]$s.RuntimeT[1]
-                T3 = [int]$s.RuntimeT[2]
-                D2 = [int][Math]::Round(100.0 * $s.RuntimeRaw[1] / 255)
-                D3 = [int][Math]::Round(100.0 * $s.RuntimeRaw[2] / 255)
-            })
-        $script:FanSeeded = $true
-        $script:FanCurveSource = 'ec'
-        Write-Dbg ('fan curve seeded from EC then snapped to Step {0}: T2={1} D2={2} T3={3} D3={4}' -f `
-            $script:FanLimits.Step, $script:FanCustom.T2, $script:FanCustom.D2, $script:FanCustom.T3, $script:FanCustom.D3)
-    }
-
-    # 启动时**按"我的配置"来**（用户要求：每次启动照我之前的配置，别读当前那份）。
-    # 这一步只做一件事：如果 EC 现在跑的表和你的配置不一样，就把它写回去 —— 但**只在 EC 已经
-    # 处于自定义模式（6）时**。你选了自动/最大，就说明你要它自己的逻辑，这时候绝不插手
-    # （否则"重启一次风扇又变回自定义"会变成另一种烦人）。每次启动只做一次。
-    if (-not $script:FanAppliedOnStart -and $script:FanCurveSource -eq 'settings' -and
-        $s.FanMode -eq 6 -and $s.RuntimeT -and (Test-ReqSlotFree)) {
-        $script:FanAppliedOnStart = $true
-        $same = ($s.RuntimeRaw[1] -eq (Convert-DutyPctToRaw $script:FanCustom.D2) -and
-                 $s.RuntimeRaw[2] -eq (Convert-DutyPctToRaw $script:FanCustom.D3) -and
-                 [int]$s.RuntimeT[1] -eq [int]$script:FanCustom.T2 -and
-                 [int]$s.RuntimeT[2] -eq [int]$script:FanCustom.T3)
-        if ($same) { Write-Dbg 'fan curve: EC 正在跑的就是你的配置，启动时无需写入' }
-        else {
-            Write-Dbg ('fan curve: 启动时按你的配置写回 EC（EC 现在是 {0}°C/{1}% {2}°C/{3}%，你的配置是 {4}°C/{5}% {6}°C/{7}%）' -f `
-                $s.RuntimeT[1], $s.RuntimeD[1], $s.RuntimeT[2], $s.RuntimeD[2],
-                $script:FanCustom.T2, $script:FanCustom.D2, $script:FanCustom.T3, $script:FanCustom.D3)
-            Request-FanCurve -Startup
-        }
-    }
-    # the node editor is only live while the EC is actually running a custom table (mode 6) -
-    # greyed out and non-clickable in 自动/最大. Read from the EC, not from the last click:
-    # the hardware state is the truth, and the pills are synced from it above.
-    $customOn = ($s.FanMode -eq 6)
-    $editOpacity = $(if ($customOn) { 1.0 } else { 0.35 })
-    foreach ($pre in 'Ct2T', 'Ct2D', 'Ct3T', 'Ct3D') {
-        $n["${pre}Minus"].IsEnabled = $customOn
-        $n["${pre}Plus"].IsEnabled = $customOn
-        $n["${pre}Val"].Opacity = $editOpacity
-        $n["${pre}Unit"].Opacity = $editOpacity
-    }
-    $n.Ct2RowLabel.Opacity = $editOpacity
-    $n.Ct3RowLabel.Opacity = $editOpacity
-
-    # ---- 自定义曲线的四个数字 ----
-    # number and unit live in separate fixed-width boxes; only the number changes
-    $n.Ct2TVal.Text = '{0}' -f $script:FanCustom.T2
-    $n.Ct2DVal.Text = '{0}' -f $script:FanCustom.D2
-    $n.Ct3TVal.Text = '{0}' -f $script:FanCustom.T3
-    $n.Ct3DVal.Text = '{0}' -f $script:FanCustom.D3
-    $n.Ct2DUnit.Text = '%'; $n.Ct3DUnit.Text = '%'
-    # 说清楚这两行到底是"谁的"曲线：用户自己配的那份（存 settings.json，重启面板也在）还是
-    # 从 EC 当前表吸附来的。以前这里没写，用户看到 60/38、86/59 会以为"我配的丢了"。
-    $n.CustHint.Text = $(if ($script:FanCurveSource -eq 'settings') {
-            '节点 1 = 40°C/28%、节点 4 = 100°C/100% 由 EC 固定；这两行是你保存的曲线（存在 settings.json，重启面板也在），只能按 5 调'
-        }
-        else {
-            '节点 1 = 40°C/28%、节点 4 = 100°C/100% 由 EC 固定；这两行暂时是"EC 当前表吸附到 5 的倍数"——你按一次自定义/加减就会存成你自己的配置'
-        })
-
-    # ---- 显卡 ----
-    # No pills (probe failed / EC reports no switchable modes) => hide the whole row rather
-    # than offer buttons that cannot work. When a mode has been staged but not rebooted, say
-    # so next to the active mode - the two are different things and must not be conflated.
-    if ($script:GpuPills.Count -gt 0 -and $null -ne $s.GpuMode) {
-        $n.GpuRow.Visibility = 'Visible'
-        for ($i = 0; $i -lt $script:GpuPills.Count; $i++) {
-            Set-Pill $n["Gpu$i"] $n["Gpu${i}T"] ($s.GpuMode -eq $script:GpuPills[$i].Id) '#FFB98BFF'
-        }
-        $staged = [int]$s.GpuStaged
-        if ($staged -gt 0 -and $staged -ne $s.GpuMode -and $script:GpuModeName.ContainsKey($staged)) {
-            $n.GpuNow.Text = '当前 {0}   ·   已暂存 {1}，重启生效' -f $s.GpuModeName, $script:GpuModeName[$staged]
-            $n.GpuNow.Foreground = Get-Brush '#FFE3C86F'
-            # 有暂存就顺手给一个「立即重启」的入口：重启申请弹窗关掉之后（或者用户当时选了
-            # "稍后"），想马上重启还能在这儿点一下，不必去开始菜单找。
-            $n.GpuRebootBtn.Visibility = 'Visible'
-        }
-        else {
-            $n.GpuNow.Text = '当前 {0}' -f $s.GpuModeName
-            $n.GpuNow.Foreground = Get-Brush '#FF6B7385'
-            $n.GpuRebootBtn.Visibility = 'Collapsed'
-        }
-    }
-    else { $n.GpuRow.Visibility = 'Collapsed'; $n.GpuRebootBtn.Visibility = 'Collapsed' }
-
-    # ---- 标签页 ----
-    # FOUR tabs, and every one of them gets the same-sized box: 状态 lives in StatePanel and
-    # the other three share ControlPanel, whose height/padding/margins are identical. So the
-    # window never resizes when tabs are switched (user request: 四个界面长宽一样).
-    $tab = [string]$script:LedSel.Tab
-    $n.TabState.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
-    $n.StatePanel.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
-    $n.TabPerf.Visibility = $(if ($tab -eq 'perf') { 'Visible' } else { 'Collapsed' })
-    $n.TabKb.Visibility = $(if ($tab -eq 'kb') { 'Visible' } else { 'Collapsed' })
-    $n.TabMisc.Visibility = $(if ($tab -eq 'misc') { 'Visible' } else { 'Collapsed' })
-    $n.TabAbout.Visibility = $(if ($tab -eq 'about') { 'Visible' } else { 'Collapsed' })
-    $n.ControlPanel.Visibility = $(if ($tab -eq 'state') { 'Collapsed' } else { 'Visible' })
-    Set-Pill $n.TabBtnState $n.TabBtnStateT ($tab -eq 'state') '#FFB98BFF'
-    Set-Pill $n.TabBtnPerf $n.TabBtnPerfT ($tab -eq 'perf') '#FFB98BFF'
-    Set-Pill $n.TabBtnKb $n.TabBtnKbT ($tab -eq 'kb') '#FFB98BFF'
-    Set-Pill $n.TabBtnMisc $n.TabBtnMiscT ($tab -eq 'misc') '#FFB98BFF'
-    Set-Pill $n.TabBtnAbout $n.TabBtnAboutT ($tab -eq 'about') '#FFB98BFF'
-    # the sampler only reads the 杂项 channels while that page is the one on screen
-    # （启动时若还欠一次完整杂项读 —— 为了跟"我的配置"比充电窗口 —— 就一直要点着它，
-    #   读完那次由采样器把 NeedFullMisc 清掉，见采样器里那行）
-    $script:Sync.WantMisc = ($tab -eq 'misc') -or [bool]$script:Sync.NeedFullMisc
-    # 状态页只要一个亮度值（滑杆在那里），所以单独给它一路轻量读取：没必要为了一个数字
-    # 把触控板/电池/充电器都拉一遍，那会把采样周期拖慢。
-    $script:Sync.WantBright = ($tab -eq 'state')
-    # DCHU 通道坏了 → 托盘里的"修复 DCHU 驱动…"亮起来（正常时灰着，不干扰）
-    if ($script:TrayFixItem) {
-        try { $script:TrayFixItem.Enabled = [bool]$s.Err } catch { }
-    }
-    for ($i = 0; $i -lt $script:AutostartPills.Count; $i++) {
-        # read the real state instead of a cached flag: the exe can toggle it from the CLI
-        # while the panel is open, and a stale pill would be a lie
-        Set-Pill $n["Auto$i"] $n["Auto${i}T"] ([bool]$script:AutostartPills[$i].On -eq (Get-AutostartState)) '#FF6FE38A'
-    }
-
-    # ---- 常显信息条 ----
-    # Two lines that stay visible on every tab: the sensors, and the active choices. Both are
-    # monospace with FIXED-WIDTH fields ({0,5} etc.). Proportional text made every later field
-    # slide sideways whenever a digit count changed (4,998 -> 5,126 RPM), which reads as "the
-    # text is not aligned". The two lines are also what made an 800px-wide strip possible;
-    # in the portrait window the same text simply wraps into two shorter lines.
-    $n.VitalsSensors.Text = 'CPU {0,3}°C {1,6:N0} RPM {2,3}% {3,5}W' -f `
-        $s.CpuTemp, $s.CpuFanRpm, $(if ($null -ne $s.CpuUtil) { $s.CpuUtil } else { '--' }),
-        $(if ($null -ne $s.CpuWatts) { '{0:N0}' -f $s.CpuWatts } else { '--' })
-    $n.VitalsModes.Text = 'GPU {0,3}°C {1,6:N0} RPM {2,3}%   ·   {3} · {4} · {5} · {6}' -f `
-        $s.GpuTemp, $s.GpuFanRpm, $(if ($null -ne $s.GpuUtil) { $s.GpuUtil } else { '--' }),
-        $(if ($powerActive) { $powerActive } else { $s.PowerModeName }),
-        $(if ($fanActive) { $fanActive } else { $s.FanModeName }),
-        $s.GpuModeName,
-        $(if ($kbActive) { $kbActive } else { '—' })
-
-    if ($tab -eq 'kb') {
-        $sel = $script:LedSel
-        for ($i = 0; $i -lt $script:LedModePills.Count; $i++) {
-            Set-Pill $n["Led$i"] $n["Led${i}T"] ($i -eq [int]$sel.ModeIdx) '#FFB98BFF'
-        }
-        for ($i = 0; $i -lt $script:RgbBrightness.Count; $i++) {
-            Set-Pill $n["RgbB$i"] $n["RgbB${i}T"] ($i -eq [int]$sel.Bright) '#FFB98BFF'
-        }
-        for ($i = 0; $i -lt $script:LedSpeedPills.Count; $i++) {
-            Set-Pill $n["Spd$i"] $n["Spd${i}T"] ($i -eq [int]$sel.Speed) '#FFB98BFF'
-        }
-        # ---- colour row: ALWAYS visible ----
-        # 以前按模式隐藏（关闭/循环 时不显示）。用户把灯设成「关闭」以后再进这一页，
-        # 颜色和色盘整块不见了 —— 读起来就是"颜色选择没了"，而不是"这个模式不用颜色"。
-        # 现在可见性和可用性分开：行一直在，只是当前模式用不到时变暗 + 说明原因，
-        # 点色块/色盘仍然会记住选择（切到 静态/波/呼吸 立刻生效），但不会白发一次写入。
-        # ModeIdx = -1 表示"EC 里是一个本面板不提供的模式"，此时按第一个模式（关闭）的
-        # 属性来呈现，和上面 pill 全不亮是同一个道理。
-        $mi = [int]$sel.ModeIdx
-        $mp = $(if ($mi -ge 0 -and $mi -lt $script:LedModePills.Count) { $script:LedModePills[$mi] } else { $script:LedModePills[0] })
-        $nColors = [int]$mp.Colors
-        $colourUsable = ($nColors -ge 1)
-        $n.LedColorRow.Visibility = 'Visible'
-        $dim = $(if ($colourUsable) { 1.0 } else { 0.45 })
-        $n.LedColorRow.Opacity = $dim
-        $n.ColorWheelBox.Opacity = $dim
-        # swatch rings: 彩虹 is a choice of its own, so it lights up instead of a colour
-        $rainbowIdx = -1
-        for ($i = 0; $i -lt $script:RgbPills.Count; $i++) {
-            if ($script:RgbPills[$i].ContainsKey('Rainbow')) { $rainbowIdx = $i; continue }
-            $sel1 = (-not $sel.Rainbow) -and ($i -eq [int]$sel.Color)
-            $n["Rgb$i"].BorderThickness = $(if ($sel1) { 2 } else { 0 })
-            $n["Rgb$i"].BorderBrush = Get-Brush '#FFEDF0F5'
-        }
-        if ($rainbowIdx -ge 0) {
-            $n["Rgb$rainbowIdx"].BorderThickness = $(if ($sel.Rainbow) { 2 } else { 0 })
-            $n["Rgb$rainbowIdx"].BorderBrush = Get-Brush '#FFEDF0F5'
-            # 彩虹 is meaningless where the firmware has no multi-colour variant
-            $n["Rgb$rainbowIdx"].Opacity = $(if ($mp.Rainbow) { 1.0 } else { 0.25 })
-        }
-        $c = $script:RgbPills[[int]$sel.Color]
-        $n.LedColorHint.Text = $(if (-not $colourUsable) { '「{0}」不用颜色；选了会记住，切到 静态/波/呼吸 生效' -f $mp.Label }
-            elseif ($sel.Rainbow -and $sel.Mode -eq 'static') { '彩虹：整键盘重绘（约 0.3 秒）' }
-            elseif ($sel.Rainbow) { '彩虹：交给固件自己配色' }
-            elseif ($sel.UseCustom) { '色盘自定义颜色' }
-            elseif ($sel.Mode -eq 'static') { '整键盘重绘（约 0.3 秒）' }
-            else { '当前 {0}' -f $c.Label })
-
-        # ---- 方向行：只有「波」用得到（帧里 d0 = 0xA1/0x71 + 方向）----
-        $dirMode = ($sel.Mode -eq 'wave')
-        $n.LedDirRow.Visibility = $(if ($dirMode) { 'Visible' } else { 'Collapsed' })
-        if ($dirMode) {
-            for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) {
-                Set-Pill $n["Dir$i"] $n["Dir${i}T"] ([int]$script:LedDirPills[$i].Idx -eq [int]$sel.Dir) '#FFB98BFF'
-            }
-        }
-
-        # ---- 色盘：和颜色行一样始终显示（不可用时只是变暗，见上）----
-        $n.ColorWheelBox.Visibility = 'Visible'
-        if ($true) {
-            # marker position comes from the stored hue/sat, so it does not drift on repaint
-            if ($sel.UseCustom -and $null -ne $script:WheelHue) {
-                $rad = [double]$script:WheelHue * [Math]::PI / 180.0
-                $r0 = $script:WheelSize / 2.0
-                $sat = [double]$script:WheelSat / 100.0
-                $mx = $r0 + [Math]::Cos($rad) * $sat * $r0
-                $my = $r0 + [Math]::Sin($rad) * $sat * $r0
-                [System.Windows.Controls.Canvas]::SetLeft($n.WheelMark, $mx - 7)
-                [System.Windows.Controls.Canvas]::SetTop($n.WheelMark, $my - 7)
-                $n.WheelMark.Visibility = 'Visible'
-            }
-            else { $n.WheelMark.Visibility = 'Collapsed' }
-            if ($sel.UseCustom) { $cr = [int]$sel.Custom.R; $cg = [int]$sel.Custom.G; $cb = [int]$sel.Custom.B }
-            else { $cr = [int]$c.R; $cg = [int]$c.G; $cb = [int]$c.B }
-            $n.WheelPick.Background = Get-Brush ('#FF{0:X2}{1:X2}{2:X2}' -f $cr, $cg, $cb)
-            $n.WheelText.Text = '#{0:X2}{1:X2}{2:X2}' -f $cr, $cg, $cb
-            $n.WheelText2.Text = 'R{0,3} G{1,3} B{2,3}' -f $cr, $cg, $cb
-            if ($sel.UseCustom -and $null -ne $script:WheelHue) {
-                $n.WheelHint.Text = '色相 {0}° · 饱和 {1}%' -f [int]$script:WheelHue, [int]$script:WheelSat
-            }
-            else { $n.WheelHint.Text = '点/拖色盘取任意纯色，立即生效' }
-        }
-        $n.KbHint.Text = $(if (-not $kbOffered -and $kbActive) {
-                'EC 里当前是「{0}」，本面板不提供该模式；点上面任意模式即可覆盖。' -f $kbActive
-            } else { '' }) + $script:KbHintBase
-    }
-
-    if ($tab -eq 'about') {
-        # 信息行的值全部来自真实来源：EXE 的构建时间取自 EXE 自己的时间戳，路径取自本次运行
-        # 的实际位置，DCHU 通道状态取自 dchu.ps1 真的选中的那个 DLL。没有"写死的简介"。
-        $exePath = $(if ($script:HostExe -and (Test-Path -LiteralPath $script:HostExe)) { $script:HostExe }
-                     else { Join-Path $PSScriptRoot 'ClevoHelper.ps1' })
-        $built = '--'
-        try { $built = (Get-Item -LiteralPath $exePath).LastWriteTime.ToString('yyyy-MM-dd HH:mm') } catch { }
-        $portable = [bool]($script:HostExe -and (Test-Path -LiteralPath $script:HostExe))
-        # 长路径只显示尾部几段（用户反馈"看起来较宽"），完整值在 tooltip 里 —— 显示的是真的，
-        # 只是不把一整行都塞满
-        $short = {
-            param([string]$v, [int]$max = 44)
-            if ($v.Length -le $max) { return $v }
-            $parts = $v -split '\\'
-            $out = $parts[-1]
-            for ($i = $parts.Count - 2; $i -ge 0; $i--) {
-                $try = $parts[$i] + '\' + $out
-                if ($try.Length + 2 -gt $max) { break }
-                $out = $try
-            }
-            return '…\' + $out
-        }
-        $vals = [ordered]@{
-            Version   = 'v' + $script:AppVersion
-            Built     = $built
-            Mode      = $(if ($portable) { '单文件 EXE（自包含）' } else { '脚本运行（开发模式）' })
-            ExePath   = (& $short $exePath)
-            DataDir   = (& $short (Split-Path $script:LogPath -Parent))
-            Serial    = [string]$script:SysInfo.Serial
-            Bios      = [string]$script:SysInfo.Bios
-            Windows   = [string]$script:SysInfo.Windows
-        }
-        # tooltip 永远是完整值
-        $full = [ordered]@{
-            ExePath = $exePath
-            DataDir = (Split-Path $script:LogPath -Parent)
-        }
-        if ($n.AboutChannelWarn) { $n.AboutChannelWarn.Visibility = $(if ($s.Err) { 'Visible' } else { 'Collapsed' }) }
-        # 机型守卫：拦下写入时，关于页必须说清"为什么点按钮没反应"。
-        # 平时不显示（本机是 X370SN，永远不显示），只有判定不通过或走了逃生门才出现。
-        if ($n.AboutGuardWarn) {
-            $gw = $script:Sync.GuardWarn
-            $n.AboutGuardWarn.Visibility = $(if ($gw) { 'Visible' } else { 'Collapsed' })
-            if ($gw) { $n.AboutGuardWarn.Text = $gw }
-        }
-        foreach ($k in $vals.Keys) {
-            $tb = $n[('About_' + $k)]
-            if ($tb) {
-                $tb.Text = [string]$vals[$k]
-                $tb.ToolTip = $(if ($full.Contains($k)) { [string]$full[$k] } else { [string]$vals[$k] })
-            }
-        }
-    }
-
-    if ($tab -eq 'misc') {
-        # Every row here shows the state that was READ BACK, never the last click: the whole
-        # point of this tab is that the hardware is the answer. $s.Misc is null until the
-        # sampler's first misc read (about a second after the tab is opened).
-        $mi = $s.Misc
-        $sel = $script:MiscSel
-
-        # ---- 电池状态（系统读数，让充电限制的效果就在旁边）----
-        $bt = $(if ($null -ne $mi) { $mi.Battery } else { $null })
-        if ($null -ne $bt -and $bt.Supported) {
-            $n.BattBar.Width = [Math]::Round(160 * [int]$bt.Percent / 100)
-            $bc = if ([int]$bt.Percent -ge 90) { '#FF6FE38A' } elseif ([int]$bt.Percent -ge 30) { '#FF57B0FF' } else { '#FFE38A6F' }
-            $n.BattBar.Background = Get-Brush $bc
-            $n.BattText.Text = '{0,3}%   {1}' -f [int]$bt.Percent, $(if ($bt.OnAc) { '已接电源' } else { '电池供电' })
-        }
-        else { $n.BattBar.Width = 0; $n.BattText.Text = '--' }
-
-        # ---- 电池充电 ----
-        # The EC's own three states map onto the three pills: 不限制 = 最大电量,
-        # 70/80 = 推荐（原厂值）, anything else = 自定义.
-        # 优先级：用户刚点开自定义（CustomOpen）> 有写入在飞 > EC 的当前状态。
-        # 少了第一档就会出现"点自定义 → 这一行一闪就被收回去"（因为 EC 此刻还是 70/80 =
-        # 推荐，下一次重画就按推荐把行收起来）。
-        $chgSel = ''
-        if ($null -ne $mi) {
-            $sel.Start = [int]$mi.ChargerStart
-            $sel.Stop = [int]$mi.ChargerStop
-            if ($sel.CustomOpen) { $chgSel = 'custom' }
-            elseif ($script:Sync.Pending -and $script:Sync.Pending.Kind -eq 'misc') { $chgSel = [string]$sel.Charger }
-            elseif (-not $mi.ChargerEnabled) { $chgSel = 'max' }
-            elseif ($mi.ChargerStart -eq $script:ChargerRecommended.Start -and $mi.ChargerStop -eq $script:ChargerRecommended.Stop) { $chgSel = 'rec' }
-            else { $chgSel = 'custom' }
-            $sel.Charger = $chgSel
-        }
-        for ($i = 0; $i -lt $script:ChargerPills.Count; $i++) {
-            Set-Pill $n["Chg$i"] $n["Chg${i}T"] ($script:ChargerPills[$i].Key -eq $chgSel) '#FF57B0FF'
-        }
-        if ($null -ne $mi) {
-            $n.ChargerHint.Text = $(if ($mi.ChargerEnabled) { 'EC：{0}% 起 / {1}% 停' -f $mi.ChargerStart, $mi.ChargerStop }
-                else { 'EC：不限制（充满 100%）' })
-            if ($chgSel -ne 'custom') { $n.ChargerHint.Text += '   ·   点「自定义」可改阈值' }
-        }
-        # 自定义阈值行：**常驻**，但只有自定义档可选中。不可选时整体变暗 + 不接受点击
-        # （和风扇节点行同一套做法：非自定义模式下就是"看得见、点不动"）。
-        $editable = ($chgSel -eq 'custom')
-        $n.ChgStartLabel.Opacity = $(if ($editable) { 1.0 } else { 0.35 })
-        $n.ChgStopLabel.Opacity = $(if ($editable) { 1.0 } else { 0.35 })
-        for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
-            $v = [int]$script:ChargerStartPills[$i].Id
-            # 可点 = 在自定义档 且 组合合法（起始 < 停止）
-            $clickable = $editable -and (($null -eq $mi) -or ($v -lt [int]$sel.Stop))
-            Set-Pill $n["ChgS$i"] $n["ChgS${i}T"] ($v -eq [int]$sel.Start) '#FF57B0FF'
-            $n["ChgS$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
-            $n["ChgS$i"].IsHitTestVisible = $clickable
-        }
-        for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
-            $v = [int]$script:ChargerStopPills[$i].Id
-            $clickable = $editable -and (($null -eq $mi) -or ($v -gt [int]$sel.Start))
-            Set-Pill $n["ChgE$i"] $n["ChgE${i}T"] ($v -eq [int]$sel.Stop) '#FF57B0FF'
-            $n["ChgE$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
-            $n["ChgE$i"].IsHitTestVisible = $clickable
-        }
-
-        # ---- 五个开关：显示的是读回值 ----
-        $switchState = @{
-            Tp = $(if ($null -ne $mi) { $mi.TouchPad } else { $null })
-            Wk = $(if ($null -ne $mi) { $mi.WinKey } else { $null })
-            Fl = $(if ($null -ne $mi) { $mi.FnLock } else { $null })
-            Ws = $(if ($null -ne $mi) { $mi.WinFnSwap } else { $null })
-            Nl = $(if ($null -ne $mi) { $mi.NumLock } else { $null })
-        }
-        $switchPills = @{ Tp = $script:OnOffPills; Wk = $script:EnablePills; Fl = $script:OnOffPills; Ws = $script:SwapPills; Nl = $script:OnOffPills }
-        foreach ($pre in 'Tp', 'Wk', 'Fl', 'Ws', 'Nl') {
-            $cur = $switchState[$pre]
-            for ($i = 0; $i -lt $switchPills[$pre].Count; $i++) {
-                $want = [bool]$switchPills[$pre][$i].On
-                $on = ($null -ne $cur) -and ([bool]$cur -eq $want)
-                Set-Pill $n["$pre$i"] $n["${pre}${i}T"] $on '#FF6FE38A'
-                # unknown state (no read yet) must not look like "off"
-                $n["$pre$i"].Opacity = $(if ($null -eq $cur) { 0.4 } else { 1.0 })
-            }
-        }
-        # 启动收进托盘：读的是设置文件（不是 EC，所以没有"未知"状态）
-        for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) {
-            Set-Pill $n["Tray$i"] $n["Tray${i}T"] ([bool]$script:OnOffPills[$i].On -eq [bool]$script:Settings.StartToTray) '#FF6FE38A'
-        }
-    }
-
-    # ---- 屏幕亮度（滑杆在状态页）----
-    # 这一块必须**在 misc 那个 if 之外**：它服务的是状态页。第一版手滑放进了 misc 块里面，
-    # 结果状态页的滑杆永远拿不到值（只有切到杂项页才会被赋值）—— 是日志里
-    # "没有 bright paint 这一行"暴露出来的。
-    # 拖动中、或有亮度写入在飞时**不碰滑块**：读回值天生比手慢半拍，用它去纠正滑块会把
-    # 滑块拽回去，看起来就是"一卡一卡"。松手并写入完成后，这里再按读回值对齐。
-    if ($tab -eq 'state') {
-        $pendingBright = ($null -ne $script:Sync.Pending -and $script:Sync.Pending.Kind -eq 'misc' -and $script:Sync.Pending.Sub -eq 'bright')
-        $brightNow = $(if ($s.Misc) { $s.Misc.Bright } else { $null })
-        if ($null -ne $brightNow) {
-            if (-not $script:BrightDragging -and -not $pendingBright) {
-                # 差 1 以内不纠正：驱动自己会取整，反复纠正就是白白多写几次。
-                # 赋值期间用 BrightSyncing 压住 ValueChanged，否则"同步读回值"这件事本身
-                # 会触发一次写入（每次切到状态页都白发一次）。
-                if ([Math]::Abs([int][Math]::Round($n.BrightSlider.Value) - [int]$brightNow) -gt 1) {
-                    $script:BrightSyncing = $true
-                    try { $n.BrightSlider.Value = [int]$brightNow }
-                    finally { $script:BrightSyncing = $false }
-                }
-                $n.BrightVal.Text = '{0}%' -f $brightNow
-            }
-        }
-        elseif (-not $script:BrightDragging) { $n.BrightVal.Text = '--%' }
-    }
-
-    $n.ModeText.Text = '风扇偏移 {0,-2}  ·  实际采样 {1} Hz  ·  写入串行化' -f $s.FanOffset, $(if ($script:Sync.RateHz) { $script:Sync.RateHz } else { '--' })
-    if ($s.CurveHealth -eq 'ok') {
-        # a positive offset is normal (the EC controls on a higher internal temperature than
-        # the one this panel reads), so it is reported as "生效中", not as an error
-        if ($s.CurveErr -gt 12) {
-            $n.CurveHealth.Text = '曲线生效中（实测比表高 {0:N0}%）' -f $s.CurveErr
-        }
-        else {
-            $n.CurveHealth.Text = '曲线正常（偏差 {0:N1}%）' -f $s.CurveErr
-        }
-        $n.CurveHealth.Foreground = Get-Brush '#FF6FE38A'
-    }
-    elseif ($s.CurveHealth -eq 'bad') {
-        $n.CurveHealth.Text = '⚠ 实测比表低 {0:N0}%，可能欠冷，建议先重启' -f [Math]::Abs($s.CurveErr)
-        $n.CurveHealth.Foreground = Get-Brush '#FFE38A6F'
-    }
-    elseif ($s.CurveHealth -eq 'measuring') {
-        $n.CurveHealth.Text = '健康检查采样中…'
-        $n.CurveHealth.Foreground = Get-Brush '#FF6B7385'
-    }
-    else {
-        $n.CurveHealth.Text = '自动/最大 模式不校验曲线'
-        $n.CurveHealth.Foreground = Get-Brush '#FF6B7385'
-    }
-    # The block below shows the table the EC is executing RIGHT NOW (block 13). This is the
-    # only honest answer to "did the curve write actually take effect?" - it replaced a line
-    # that showed the persisted factory table, i.e. something that is not what the fans do.
-    # Four rows instead of one long line: the data was always four nodes, and in the portrait
-    # window the one-line form ran off the edge while leaving the page half empty.
-    if ($s.RuntimeT -and @($s.RuntimeRaw).Count -ge 3) {
-        # does the running table equal the current 自定义 values?
-        $matchCustom = ($s.RuntimeRaw[1] -eq (Convert-DutyPctToRaw $script:FanCustom.D2) -and
-                        $s.RuntimeRaw[2] -eq (Convert-DutyPctToRaw $script:FanCustom.D3) -and
-                        [int]$s.RuntimeT[1] -eq [int]$script:FanCustom.T2 -and
-                        [int]$s.RuntimeT[2] -eq [int]$script:FanCustom.T3)
-        $srcs = @('EC 固定', $(if ($matchCustom -or $s.FanMode -eq 6) { '本面板曲线' } else { 'EC/其它' }),
-                       $(if ($matchCustom -or $s.FanMode -eq 6) { '本面板曲线' } else { 'EC/其它' }), 'EC 固定')
-        $lines = @('EC 正在执行的 4 节点表')
-        for ($i = 0; $i -lt 4; $i++) {
-            $lines += ('节点{0}  {1,3}°C  {2,3}%   {3}' -f ($i + 1), $s.RuntimeT[$i], $s.RuntimeD[$i], $srcs[$i])
-        }
-        $lines += $(if ($s.FanMode -ne 6) { '（当前是自动/最大，EC 用自己的表）' }
-                    elseif ($matchCustom) { '（与上面两个自定义节点一致）' }
-                    else { '（与当前自定义值不一致：是别处写的表）' })
-        $n.CurveText.Text = ($lines -join "`n")
-    }
-
-    $lw = $script:Sync.LastWrite
-    if ($lw) {
-        $n.StatusText.Text = $lw.Msg
-        if ($lw.Ok) { $n.StatusText.Foreground = Get-Brush '#FF6FE38A' } else { $n.StatusText.Foreground = Get-Brush '#FFE38A6F' }
-    }
-    elseif ($s.Err) { $n.StatusText.Text = $s.Err; $n.StatusText.Foreground = Get-Brush '#FFE38A6F' }
-    else {
-        $n.StatusText.Text = 'InsydeDCHU → AcpiBridge (ACPI\CLV0001)   ·   每次写入均读回校验'
-        $n.StatusText.Foreground = Get-Brush '#FF6B7385'
-    }
-  }
-  catch { Write-Dbg ('PAINT-ERR ' + $_.Exception.ToString()) }
-}
 
 Update-Panel
 $null = Test-Sampler -Silent   # if the sampler is already dead, recover before the first paint tick
@@ -3488,17 +2345,6 @@ $null = Test-Sampler -Silent   # if the sampler is already dead, recover before 
 #   · 托盘图标（取 16px 那一档）
 # 读不到时才退回以前那套运行时画出来的图形。
 $script:IconFile = Join-Path $PSScriptRoot 'app.ico'
-function Get-IconBitmapSource([string]$path, [int]$size) {
-    $ico = New-Object System.Drawing.Icon($path, $size, $size)
-    try {
-        $src = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon(
-            $ico.Handle, [System.Windows.Int32Rect]::Empty,
-            [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
-        $src.Freeze()
-        return $src
-    }
-    finally { $ico.Dispose() }
-}
 if (Test-Path -LiteralPath $script:IconFile) {
     try {
         # 窗口/任务栏给大一点的那一档（64），系统缩小时用的就是它
@@ -3599,27 +2445,6 @@ catch { Write-Dbg ('TRAY FAILED: ' + $_.Exception.Message) }
 # 三条入口都走这一个函数：标题栏的 – 、× 、以及系统层面的最小化（Win+↓ / 任务栏右键 →
 # 最小化，那条会先变成 WindowState=Minimized，我们在这里把它接住）。
 $script:TrayHintShown = $false
-function Hide-ToTray {
-    try {
-        # 从"最小化"状态收进托盘时先把状态还原：否则下次 Show 出来的还是最小化的窗口
-        if ($script:Win.WindowState -eq 'Minimized') { $script:Win.WindowState = 'Normal' }
-        $script:Win.Hide()
-    }
-    catch { Write-Dbg ('Hide-ToTray failed: ' + $_.Exception.Message) }
-    # 不给状态栏写"已收进托盘"那句话：窗口马上就隐藏了，而重画每 400ms 就会按 LastWrite
-    # 把那行覆盖掉 —— 写了也是一句永远看不到的话（假装通知了，其实没有）。气泡才是看得见的反馈。
-    if (-not $script:TrayHintShown) {
-        $script:TrayHintShown = $true
-        try {
-            if ($script:Tray) {
-                $script:Tray.ShowBalloonTip(3000, 'ClevoHelper 仍在运行',
-                    '已收进托盘。要退出请用托盘右键菜单的「退出」（或按 Alt+F4）。', 'Info')
-            }
-        }
-        catch { Write-Dbg ('balloon failed: ' + $_.Exception.Message) }
-    }
-    Write-Dbg 'window hidden to tray'
-}
 # 系统层面的最小化（Win+↓、任务栏右键菜单）也收进托盘，而不是留一个小标题条
 $script:Win.Add_StateChanged({
     if ($script:Win.WindowState -eq 'Minimized') { Hide-ToTray }
@@ -3650,52 +2475,6 @@ $script:WireEventMap = [ordered]@{
     Value = [System.Windows.Controls.Primitives.RangeBase]::ValueChangedEvent
 }
 
-function Get-WiredEventNames($el) {
-    $out = @()
-    if (-not $el -or -not $script:WireStoreProp) { return $out }
-    try { $store = $script:WireStoreProp.GetValue($el) } catch { return $out }
-    if (-not $store) { return $out }
-    foreach ($k in $script:WireEventMap.Keys) {
-        try { if ($store.Contains($script:WireEventMap[$k])) { $out += $k } } catch { }
-    }
-    return $out
-}
-
-# 「应该接了什么」这份清单是手写的，遗漏风险由两点兜住：一是每条都对着上面的绑定代码抄，
-# 二是自检里还有几个**真点**（Invoke-Click）会走完整链路。
-function Get-ExpectedWiring {
-    $w = New-Object System.Collections.ArrayList
-    $one = { param([string]$nm, [string]$ev) [void]$w.Add([pscustomobject]@{ Name = $nm; Ev = $ev }) }
-    $many = { param([string]$pre, [int]$cnt, [string]$ev)
-        for ($i = 0; $i -lt $cnt; $i++) { [void]$w.Add([pscustomobject]@{ Name = "$pre$i"; Ev = $ev }) } }
-    & $many 'Pwr' $script:PowerPills.Count 'Up'
-    & $one 'RevertBtn' 'Up'
-    & $many 'Gpu' $script:GpuPills.Count 'Up'
-    & $one 'GpuOk' 'Up'
-    & $one 'GpuCancel' 'Up'
-    & $one 'GpuRebootBtn' 'Up'
-    & $many 'Chg' $script:ChargerPills.Count 'Up'
-    & $many 'ChgS' $script:ChargerStartPills.Count 'Up'
-    & $many 'ChgE' $script:ChargerStopPills.Count 'Up'
-    & $one 'BrightSlider' 'Value'
-    foreach ($pre in 'Tp', 'Wk', 'Fl', 'Ws', 'Nl') { & $many $pre 2 'Up' }
-    & $many 'Led' $script:LedModePills.Count 'Up'
-    & $many 'Dir' $script:LedDirPills.Count 'Up'
-    & $many 'Rgb' $script:RgbPills.Count 'Up'
-    & $many 'RgbB' $script:RgbBrightness.Count 'Up'
-    & $many 'Spd' $script:LedSpeedPills.Count 'Up'
-    & $one 'ColorWheel' 'Up'
-    & $many 'Auto' $script:AutostartPills.Count 'Up'
-    & $many 'Tray' 2 'Up'
-    foreach ($t in 'State', 'Perf', 'Kb', 'Misc', 'About') { & $one "TabBtn$t" 'Up' }
-    & $many 'Fan' $script:FanPills.Count 'Up'
-    foreach ($f in 'Ct2T', 'Ct2D', 'Ct3T', 'Ct3D') { & $one "${f}Minus" 'Up'; & $one "${f}Plus" 'Up' }
-    & $one 'MinBtn' 'Down'
-    & $one 'TitleBar' 'Down'
-    & $one 'CloseBtn' 'Down'
-    return $w
-}
-
 # 托盘菜单是 WinForms，不走 RoutedEvent。WinForms 的处理器存在 Component 自己的
 # EventHandlerList 里（私有字段 events），键是 ToolStripItem 的私有静态 EventClick。
 # 这些都拿不到时就如实说"没检查"，不假装通过。
@@ -3709,104 +2488,6 @@ catch { $script:TrayClickKey = $null }
 if (-not $script:TrayClickKey) { $script:TrayClickKeyField = 'MISSING' }
 else { $script:TrayClickKeyField = 'ok' }
 
-function Get-TrayMenuLeaves {
-    # 叶子和"点一下就有反应的项"才算要接线；分隔线、纯下拉父项、禁用项不算
-    $out = New-Object System.Collections.ArrayList
-    if (-not $script:Tray -or -not $script:Tray.ContextMenuStrip) { return $out }
-    $walk = {
-        param($items)
-        foreach ($it in $items) {
-            if ($it -isnot [System.Windows.Forms.ToolStripMenuItem]) { continue }
-            if ($it.DropDownItems.Count -gt 0) { & $walk $it.DropDownItems; continue }
-            if (-not $it.Enabled) { continue }
-            [void]$out.Add($it)
-        }
-    }
-    & $walk $script:Tray.ContextMenuStrip.Items
-    return $out
-}
-
-function Get-WinFormsClickWired($item) {
-    if (-not $script:TrayClickKey) { return $null }        # null = 查不了
-    try {
-        $f = [System.ComponentModel.Component].GetField('events',
-            [System.Reflection.BindingFlags]'Instance,NonPublic')
-        $list = $f.GetValue($item)
-        if (-not $list) { return $false }
-        return ($null -ne $list[$script:TrayClickKey])
-    }
-    catch { return $null }
-}
-
-function Test-PanelWiring {
-    $missing = New-Object System.Collections.ArrayList
-    $total = 0
-
-    # 先验"探测器"本身：造两个不在可视树里的临时 Border，一个接事件、一个不接，看能不能分辨。
-    # 不验的话，"应接 94 缺 0"也可能只是因为这个探测器永远返回"接了"——那就成了绿色的摆设。
-    $detector = $false
-    $detectorNote = ''
-    try {
-        $pb = New-Object System.Windows.Controls.Border
-        $before = @(Get-WiredEventNames $pb)
-        $pb.Add_MouseLeftButtonUp({ })
-        $after = @(Get-WiredEventNames $pb)
-        $detector = ($before.Count -eq 0) -and ($after -contains 'Up')
-        $detectorNote = ('空控件=[{0}] 接过后=[{1}]' -f ($before -join '+'), ($after -join '+'))
-    }
-    catch { $detectorNote = '探测器抛异常: ' + $_.Exception.Message }
-    if (-not $detector) { [void]$missing.Add('接线探测器失效（' + $detectorNote + '）——「缺 0 个」这个结论不可信') }
-
-    foreach ($e in (Get-ExpectedWiring)) {
-        $total++
-        $el = $n[$e.Name]
-        if (-not $el) { $el = $script:Win.FindName($e.Name) }
-        if (-not $el) { [void]$missing.Add("$($e.Name)（控件不存在）"); continue }
-        $has = @(Get-WiredEventNames $el)
-        if ($has -notcontains $e.Ev) {
-            [void]$missing.Add(('{0}（要 {1}；实际 {2}）' -f $e.Name, $e.Ev, $(if ($has.Count) { $has -join '+' } else { '一个事件都没接' })))
-        }
-    }
-    $leaves = @(Get-TrayMenuLeaves)
-    $trayChecked = 0
-    foreach ($it in $leaves) {
-        $total++
-        $wired = Get-WinFormsClickWired $it
-        if ($null -eq $wired) { [void]$missing.Add("托盘「$($it.Text)」（查不了：WinForms 反射不可用）"); continue }
-        $trayChecked++
-        if (-not $wired) { [void]$missing.Add("托盘「$($it.Text)」（没有 Click 处理器）") }
-    }
-    return [pscustomobject]@{
-        Total = $total; Missing = $missing; TrayLeaves = $leaves.Count
-        TrayChecked = $trayChecked; TrayReflect = $script:TrayClickKeyField
-        Detector = $detector; DetectorNote = $detectorNote
-    }
-}
-
-# 真·点一下：造一对鼠标消息打到控件上。**必须控件已经进了可视树**（窗口显示过）才有用——
-# 没显示时 RaiseEvent 打了也不触发处理器（这条也是实测的，见 src\diag-wire6.ps1）。
-# 打 MouseUp 而不是 MouseLeftButtonUp 的原因：WPF 在 MouseUp 上会把左键那一路提升出来，
-# 一次消息就能同时喂到 Up 处理器，和真人按一下的行为一致；每次 Raised 只会触发一次。
-function Invoke-Click([string]$name) {
-    $el = $(if ($n[$name]) { $n[$name] } else { $script:Win.FindName($name) })
-    if (-not $el) { return $false }
-    try {
-        $d = New-Object System.Windows.Input.MouseButtonEventArgs(
-            [System.Windows.Input.Mouse]::PrimaryDevice, 0, [System.Windows.Input.MouseButton]::Left)
-        $d.RoutedEvent = [System.Windows.UIElement]::MouseLeftButtonDownEvent
-        $el.RaiseEvent($d)
-        $u = New-Object System.Windows.Input.MouseButtonEventArgs(
-            [System.Windows.Input.Mouse]::PrimaryDevice, 0, [System.Windows.Input.MouseButton]::Left)
-        $u.RoutedEvent = [System.Windows.UIElement]::MouseUpEvent
-        $el.RaiseEvent($u)
-        return $true
-    }
-    catch {
-        Write-Dbg ('Invoke-Click ' + $name + ' FAILED: ' + $_.Exception.Message)
-        return $false
-    }
-}
-
 $script:WiringCheck = Test-PanelWiring
 Write-Dbg ('WIRING: 应接 {0} 个，缺 {1} 个（托盘叶子 {2}，其中可核查 {3}，WinForms 反射 {4}；探测器 {5} {6}）' -f `
     $script:WiringCheck.Total, $script:WiringCheck.Missing.Count, $script:WiringCheck.TrayLeaves,
@@ -3819,79 +2500,6 @@ if ($script:WiringCheck.Missing.Count -gt 0) {
 }
 else { Write-Dbg 'WIRING: 全部通过' }
 
-# ------------------------------------------------------- 作用域自检（静态）---
-# 第二类"接上了也不干活"的坑，就是显卡模式那次：处理块用 GetNewClosure() 生成，块里给
-# `$script:某标量 = ...` 赋值 —— 那个赋值落进闭包自己的模块作用域，外面的脚本作用域看不到，
-# 于是另一个处理块（读同一个变量）永远读到 0，**一条命令都不发**。属性赋值不受影响
-# （`$script:LedSel.X = ...` 改的是对象），所以键盘灯一直是好的、这个坑只坑到显卡模式。
-# 这类错误在运行时看不出来（点击有反应、界面有变化），只能用静态检查挡住。
-# 这里直接解析**自己的源文件**，把 GetNewClosure() 的块里所有 `$script:标量 =` 找出来。
-# 找不到自己的文件就如实写"没检查"，不假装通过。
-function Test-ClosureScopeTrap([string]$Path) {
-    $res = [pscustomobject]@{ Checked = $false; Blocks = 0; Hits = @(); Note = ''; DetectorOk = $false }
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { $res.Note = '拿不到自己的源文件路径，没检查'; return $res }
-    try {
-        $errs = $null
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errs)
-    }
-    catch { $res.Note = '解析自己的源文件失败: ' + $_.Exception.Message; return $res }
-    $hits = New-Object System.Collections.ArrayList
-    $closures = $ast.FindAll({
-            param($a)
-            $a -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-            $a.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-            $a.Member.Value -eq 'GetNewClosure'
-        }, $true)
-    foreach ($c in $closures) {
-        # `{ ... }.GetNewClosure()` 里那个脚本块是**被调用者**（Expression），不是参数 ——
-        # 第一版按 Arguments 找，结果"闭包块数 = 0"，白扫一遍（18 个调用点一个都没看到）。
-        $cands = @($c.Expression) + @($c.Arguments)
-        foreach ($arg in $cands) {
-            if ($arg -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
-            $res.Blocks++
-            $bad = $arg.ScriptBlock.FindAll({
-                    param($a)
-                    $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                    $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                    $a.Left.VariablePath.IsScript
-                }, $true)
-            foreach ($b in $bad) {
-                [void]$hits.Add(('第 {0} 行：GetNewClosure 块里给 {1} 赋值（赋值会留在闭包自己的作用域，别处读不到）' -f `
-                            $b.Extent.StartLineNumber, $b.Left.VariablePath.UserPath))
-            }
-        }
-    }
-    $res.Checked = $true
-    $res.Hits = $hits
-    # 探测器自检：拿一段**已知有坑**的代码扫一遍，扫不出来就说明这个检查是摆设
-    # （第一版就因为找错了 AST 属性而"闭包块 = 0"，扫了个寂寞还照样报"没有坑"）。
-    $res.DetectorOk = $false
-    try {
-        $te = $null
-        $tast = [System.Management.Automation.Language.Parser]::ParseInput(
-            '$probe = { $script:ProbeTrap = 1 }.GetNewClosure()', [ref]$null, [ref]$te)
-        $tc = $tast.FindAll({
-                param($a)
-                $a -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
-                $a.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-                $a.Member.Value -eq 'GetNewClosure'
-            }, $true)
-        foreach ($c in $tc) {
-            foreach ($arg in (@($c.Expression) + @($c.Arguments))) {
-                if ($arg -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
-                $t = $arg.ScriptBlock.FindAll({
-                        param($a)
-                        $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                        $a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                        $a.Left.VariablePath.IsScript
-                    }, $true)
-                if (@($t).Count -gt 0) { $res.DetectorOk = $true }
-            }
-        }
-    }
-    catch { $res.DetectorOk = $false }
-    return $res
-}
 $selfPath = $PSCommandPath
 if (-not $selfPath) { try { $selfPath = $MyInvocation.MyCommand.Path } catch { } }
 $script:ScopeCheck = Test-ClosureScopeTrap $selfPath
@@ -4349,200 +2957,28 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                 Start-Sleep -Milliseconds 300
                 Write-Dbg ('SELFTEST tray-hide: 收尾 可见={0}（期望 True）' -f $script:Win.IsVisible)
             }
+            107 {
+                # 检查更新：版本比较是纯函数（离线也能验），网络那一段照发一次 ——
+                # 离线/被墙时看它记 error/timeout 而不是抛异常，这本身就是"不崩"的证据。
+                $cases = @(
+                    @('v1.4', '1.3', 1), @('v1.3', '1.3', 0), @('v1.2', '1.3', -1),
+                    @('v1.10', '1.9', 1), @('1.3.0', '1.3', 0), @('v2', '1.99', 1)
+                )
+                $bad = 0
+                foreach ($c in $cases) {
+                    $got = Compare-AppVersion $c[0] $c[1]
+                    if ($got -ne $c[2]) { $bad++; Write-Dbg ('SELFTEST update FAIL: {0} vs {1} 期望 {2} 实得 {3}' -f $c[0], $c[1], $c[2], $got) }
+                }
+                Write-Dbg ('SELFTEST update: 版本比较 {0}/{1} 通过（{2}）' -f ($cases.Count - $bad), $cases.Count,
+                    $(if ($bad -eq 0) { 'PASS' } else { 'FAIL' }))
+                $grel = Get-LatestRelease 6000
+                Write-Dbg ('SELFTEST update: 实网 kind={0} ok={1} 远端={2} 本机=v{3} url={4} msg={5}' -f `
+                    $grel.Kind, $grel.Ok, $grel.Tag, $script:AppVersion, $grel.Url, $grel.Message)
+            }
             109 { Write-Dbg 'SELFTEST: done, closing'; $script:Win.Close() }
         }
     })
     $st.Start()
-}
-
-# ---------------------------------------------------------------- 重启申请 ---
-# 显卡模式是开机前（pre-boot）值：**暂存完必须重启一次才生效**。原厂控制中心的做法是
-# `shutdown -f -r -t 0` —— 直接替你重启；我们不做这种事，但也不能只把话写在状态栏里让用户
-# 自己想起来。所以暂存成功后弹一张"重启申请"：
-#   「立即重启」→ 安排 20 秒后重启（同一个窗口变成倒计时，期间可以「取消重启」，走 shutdown /a）
-#   「稍后我自己重启」→ 关掉，什么都不做
-#
-# 两个实现上的注意：
-#   1. **非模态**（Show 而不是 ShowDialog）：面板的采样/重画走的是 DispatcherTimer，弹模态
-#      对话框会套一层嵌套消息循环，多一层就多一处出问题的机会；而且这张申请不该卡住面板。
-#   2. 对话框里的状态一律放在一个**hashtable**里（$st）传给命名函数用。原因见显卡模式那个
-#      作用域陷阱（README 3.40）：给对象赋属性跨作用域没问题，给 `$script:标量` 赋值才会丢。
-#      这里所有处理块都只是 `函数 $st`，没有任何脚本作用域赋值 —— 面板启动时的静态扫描会盯着。
-function New-RebootButton([string]$Text, [string]$Bg, [string]$Fg, [switch]$Accent) {
-    $b = New-Object System.Windows.Controls.Border
-    $b.Background = Get-Brush $Bg
-    $b.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 13
-    $b.MinWidth = 104
-    $b.Padding = New-Object System.Windows.Thickness -ArgumentList 0, 7, 0, 7
-    $b.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 0, 8, 0
-    $b.Cursor = [System.Windows.Input.Cursors]::Hand
-    $t = New-Object System.Windows.Controls.TextBlock
-    $t.Text = $Text
-    $t.Foreground = Get-Brush $Fg
-    $t.FontSize = 12
-    $t.TextAlignment = 'Center'
-    if ($Accent) { $t.FontWeight = [System.Windows.FontWeights]::SemiBold }
-    $b.Child = $t
-    return $b
-}
-
-function Confirm-RebootNow($st) {
-    # 只做"安排"：真正的重启由 Windows 在倒计时结束后执行，期间用户可以取消
-    if ($st.Dry) {
-        Write-Dbg 'REBOOT-PROMPT(dry): 点到「立即重启」——测试模式，不真的重启'
-    }
-    else {
-        try {
-            Start-Process -FilePath 'shutdown.exe' -WindowStyle Hidden -ArgumentList @(
-                '/r', '/t', '20', '/c', 'ClevoHelper：重启以应用显卡模式')
-            $st.Scheduled = $true
-        }
-        catch { $st.Note.Text = '安排重启失败：' + $_.Exception.Message }
-    }
-    $st.Ask.Visibility = 'Collapsed'
-    $st.Count.Visibility = 'Visible'
-    # dry（自检用）只走 5 秒，免得测试拖时间；真跑是 20 秒
-    $st.Sec = $(if ($st.Dry) { 5 } else { 20 })
-    $st.Note.Text = ('{0} 秒后重启…（点「取消重启」可以中止）' -f $st.Sec)
-    if (-not $st.Timer) {
-        $st.Timer = New-Object System.Windows.Threading.DispatcherTimer
-        $st.Timer.Interval = [TimeSpan]::FromSeconds(1)
-        $st.Timer.Add_Tick({ Step-RebootCountdown $st }.GetNewClosure())
-        $st.Timer.Start()
-    }
-}
-function Step-RebootCountdown($st) {
-    $st.Sec = [int]$st.Sec - 1
-    if ($st.Sec -le 0) {
-        try { $st.Timer.Stop() } catch { }
-        try { $st.Win.Close() } catch { }
-        return
-    }
-    $st.Note.Text = ('{0} 秒后重启…（点「取消重启」可以中止）' -f $st.Sec)
-}
-function Cancel-RebootNow($st) {
-    if ($st.Dry) { Write-Dbg 'REBOOT-PROMPT(dry): 点到「取消重启」' }
-    if ($st.Scheduled -and -not $st.Dry) {
-        try {
-            Start-Process -FilePath 'shutdown.exe' -WindowStyle Hidden -ArgumentList @('/a')
-            $st.Note.Text = '已取消重启。想生效时自己重启一次即可。'
-        }
-        catch { $st.Note.Text = '取消失败：' + $_.Exception.Message }
-    }
-    else { $st.Note.Text = '已取消。想生效时自己重启一次即可。' }   # dry 也走这条，让自检能看到文案
-    if ($st.Timer) { try { $st.Timer.Stop() } catch { } }
-    $t = New-Object System.Windows.Threading.DispatcherTimer
-    $t.Interval = [TimeSpan]::FromMilliseconds(1800)
-    $t.Add_Tick({ $t.Stop(); $st.Win.Close() }.GetNewClosure())
-    $t.Start()
-}
-
-function Show-RebootPrompt([int]$Mode, [switch]$DryRun) {
-    $name = $(if ($script:GpuModeName.ContainsKey($Mode)) { $script:GpuModeName[$Mode] } else { "模式 $Mode" })
-    $w = New-Object System.Windows.Window
-    $w.WindowStyle = 'None'
-    $w.AllowsTransparency = $true
-    $w.Background = [System.Windows.Media.Brushes]::Transparent
-    $w.SizeToContent = 'WidthAndHeight'
-    $w.Width = 380
-    $w.ShowInTaskbar = $false
-    $w.Topmost = $true
-    $w.WindowStartupLocation = $(if ($script:Win.IsVisible) { 'CenterOwner' } else { 'CenterScreen' })
-    if ($script:Win.IsVisible) { $w.Owner = $script:Win }
-
-    $root = New-Object System.Windows.Controls.Border
-    $root.Background = Get-Brush '#FF141619'
-    $root.BorderBrush = Get-Brush '#FF2B303B'
-    $root.BorderThickness = New-Object System.Windows.Thickness -ArgumentList 1
-    $root.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 14
-    $root.Padding = New-Object System.Windows.Thickness -ArgumentList 20, 16, 20, 16
-    $stack = New-Object System.Windows.Controls.StackPanel
-
-    $h = New-Object System.Windows.Controls.TextBlock
-    $h.Text = '需要重启才能生效'
-    $h.Foreground = Get-Brush '#FFEDF0F5'
-    $h.FontSize = 15
-    $h.FontWeight = [System.Windows.FontWeights]::SemiBold
-    [void]$stack.Children.Add($h)
-
-    $b = New-Object System.Windows.Controls.TextBlock
-    $b.Text = ('显卡模式已暂存为「{0}」。这是开机前的设置，重启后才会真正切换。' -f $name)
-    $b.Foreground = Get-Brush '#FFD7DCE6'
-    $b.FontSize = 12
-    $b.TextWrapping = 'Wrap'
-    $b.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 9, 0, 0
-    [void]$stack.Children.Add($b)
-
-    $ask = New-Object System.Windows.Controls.StackPanel
-    $q = New-Object System.Windows.Controls.TextBlock
-    $q.Text = '现在重启，还是你自己找时间重启？'
-    $q.Foreground = Get-Brush '#FF8A93A6'
-    $q.FontSize = 11
-    $q.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 6, 0, 0
-    [void]$ask.Children.Add($q)
-    $row = New-Object System.Windows.Controls.StackPanel
-    $row.Orientation = 'Horizontal'
-    $row.HorizontalAlignment = 'Right'
-    $row.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 14, 0, 0
-    $btnNow = New-RebootButton '立即重启' '#FF57B0FF' '#FF11141A' -Accent
-    $btnLater = New-RebootButton '稍后我自己重启' '#FF262A33' '#FFD7DCE6'
-    $btnLater.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 0, 0, 0
-    [void]$row.Children.Add($btnNow)
-    [void]$row.Children.Add($btnLater)
-    [void]$ask.Children.Add($row)
-    [void]$stack.Children.Add($ask)
-
-    $cnt = New-Object System.Windows.Controls.StackPanel
-    $cnt.Visibility = 'Collapsed'
-    $note = New-Object System.Windows.Controls.TextBlock
-    $note.Foreground = Get-Brush '#FFE3C86F'
-    $note.FontSize = 12
-    $note.TextWrapping = 'Wrap'
-    $note.Text = ''
-    [void]$cnt.Children.Add($note)
-    $row2 = New-Object System.Windows.Controls.StackPanel
-    $row2.Orientation = 'Horizontal'
-    $row2.HorizontalAlignment = 'Right'
-    $row2.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 14, 0, 0
-    $btnCancel = New-RebootButton '取消重启' '#FF262A33' '#FFD7DCE6'
-    $btnCancel.Margin = New-Object System.Windows.Thickness -ArgumentList 0, 0, 0, 0
-    [void]$row2.Children.Add($btnCancel)
-    [void]$cnt.Children.Add($row2)
-    [void]$stack.Children.Add($cnt)
-
-    $root.Child = $stack
-    $w.Content = $root
-
-    $st = [hashtable]::Synchronized(@{
-            Win = $w; Ask = $ask; Count = $cnt; Note = $note; Sec = 20
-            Timer = $null; Scheduled = $false; Dry = [bool]$DryRun
-        })
-    # 处理块只调用命名函数，并把状态作为参数传进去 —— 不写任何脚本作用域变量（作用域自检会查）
-    $btnNow.Add_MouseLeftButtonUp({ Confirm-RebootNow $st }.GetNewClosure())
-    $btnLater.Add_MouseLeftButtonUp({ $st.Win.Close() }.GetNewClosure())
-    $btnCancel.Add_MouseLeftButtonUp({ Cancel-RebootNow $st }.GetNewClosure())
-    $w.Add_KeyDown({ if ($_.Key -eq 'Escape') { $st.Win.Close() } }.GetNewClosure())
-    $w.Add_MouseLeftButtonDown({ $st.Win.DragMove() }.GetNewClosure())
-
-    $w.Show()
-    $w.Activate()
-    $script:RebootDlg = $st
-    Write-Dbg ('REBOOT-PROMPT: 已弹出（模式={0}「{1}」dry={2}；面板可见={3}）' -f $Mode, $name, [bool]$DryRun, $script:Win.IsVisible)
-}
-
-# 每次暂存都问一次：暂存是用户点「药丸 + 确认」两步做出来的，本来就是"我现在想切"的意思，
-# 所以不存在"问过了就不再问"的道理（换回原来的模式也一样要重启才生效）。真正需要防的是
-# 同一次暂存被问两遍 —— 那个由"读到就清空 RebootAsk"保证。
-function Test-RebootAsk {
-    $ra = $script:Sync.RebootAsk
-    if (-not $ra) { return }
-    $script:Sync.RebootAsk = $null
-    if ($SelfTest -or $SizeProbe) {
-        Write-Dbg ('REBOOT-ASK: 模式 {0} 已暂存（诊断模式下不弹窗）' -f $ra.Mode)
-        return
-    }
-    try { Show-RebootPrompt -Mode ([int]$ra.Mode) }
-    catch { Write-Dbg ('REBOOT-PROMPT FAILED: ' + $_.Exception.Message) }
 }
 
 # ---- 合盖/睡眠恢复后重新注入键盘灯 ------------------------------------------------
@@ -4557,17 +2993,6 @@ function Test-RebootAsk {
 #       （走和开机完全相同的那条路径，成功/失败照样落盘成 STARTUP led: ok=…）。
 $script:LastTickAt = $null
 $script:ResumeGapSeconds = 45
-function Test-ResumeGap {
-    $now = Get-Date
-    $prev = $script:LastTickAt
-    $script:LastTickAt = $now
-    if ($null -eq $prev) { return }
-    $gap = ($now - $prev).TotalSeconds
-    if ($gap -lt $script:ResumeGapSeconds) { return }
-    Write-Dbg ('RESUME: 系统停摆 {0:N0} 秒（睡眠/休眠恢复），重新注入键盘灯' -f $gap)
-    $script:LedRestored = $false
-    $script:LedRestoreWaited = $false
-}
 
 $script:Timer = New-Object System.Windows.Threading.DispatcherTimer
 $script:Timer.Interval = [TimeSpan]::FromMilliseconds(400)
@@ -4580,18 +3005,6 @@ $script:Timer.Start()
 # 以前启动器遇到"已经在运行"就直接 return，用户双击桌面上的 EXE 时什么都不会发生，
 # 看起来就是"这个 exe 用不了"。
 $script:ShowFlag = Join-Path (Split-Path $PSScriptRoot -Parent) 'show.request'
-function Test-ShowRequest {
-    try {
-        if (-not (Test-Path -LiteralPath $script:ShowFlag)) { return }
-        Remove-Item -LiteralPath $script:ShowFlag -Force -ErrorAction SilentlyContinue
-        $script:Win.Show()
-        $script:Win.Activate()
-        $n.StatusText.Text = '已有一个面板在运行，这是它（窗口已调到前面）'
-        $n.StatusText.Foreground = Get-Brush '#FF8A93A6'
-        Write-Dbg 'show.request consumed -> window shown+activated'
-    }
-    catch { Write-Dbg ('show.request failed: ' + $_.Exception.Message) }
-}
 
 $script:Win.Add_Closed({
     try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch { }
@@ -4625,9 +3038,4 @@ else {
     $script:Win.Show()
     [System.Windows.Threading.Dispatcher]::Run()
 }
-
-
-
-
-
 

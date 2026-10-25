@@ -26,7 +26,22 @@ if (-not $OutDir) { $OutDir = Join-Path $root 'dist' }
 # Runtime files only. diag-*.ps1 / dotnet-*.ps1 / pe-exports.ps1 are development tools and
 # stay out of the shipped exe.
 $scripts = @(
-    'ClevoHelper.ps1',    # the panel
+    'ClevoHelper.ps1',    # the panel（主文件：界面骨架 + 顶层流程；具体功能在下面 panel-*.ps1）
+    # ---- 面板的分模块续页 ----------------------------------------------------------
+    # 这些不是 PowerShell 模块，而是同一份脚本的续页：主文件里用
+    #   foreach ($m in $script:PanelModules) { . (Join-Path $PSScriptRoot $m) }
+    # dot-source 进来，共享同一个作用域。**新增文件必须同时加进主文件的
+    # $script:PanelModules 和下面这个清单**，否则打包时不会被带进 exe，双击就报找不到函数。
+    'panel-core.ps1',     # 基础：存取配置、写日志、请求槽、XAML 小控件构造器
+    'panel-fan.ps1',      # 风扇曲线
+    'panel-led.ps1',      # 键盘灯
+    'panel-mode.ps1',     # 模式与杂项：显卡模式二次确认、杂项写读、开机自启
+    'panel-about.ps1',    # 关于页：版本比较 + GitHub Release 查询
+    'panel-paint.ps1',    # 重画：把采样快照刷到界面（Update-Panel）
+    'panel-sampler.ps1',  # 后台采样 runspace
+    'panel-tray.ps1',     # 托盘
+    'panel-reboot.ps1',   # 重启申请提示窗
+    'panel-selftest.ps1', # 自检（接线核查 / 真点 / 作用域静态检查）
     'model-guard.ps1',    # 机型守卫：唯一判定点（dchu.ps1 与 kbled.ps1 都 dot-source 它）
     'dchu.ps1',           # DCHU bridge
     'fancurve.ps1',       # fan curve layer
