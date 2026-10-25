@@ -24,9 +24,6 @@ $script:InstallExe = Join-Path $script:InstallDir 'ClevoHelper.exe'
 $script:AutostartLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'ClevoHelper.lnk'
 $script:LegacyAutostartVbs = Join-Path ([Environment]::GetFolderPath('Startup')) 'ClevoHelper.vbs'
 
-function Get-AutostartPath { return $script:AutostartLnk }
-function Get-AutostartLogPath { Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\autostart.log' }
-
 function Get-AutostartState {
     # 旧的 .vbs 也算"开着"，这样从老版本升上来时能迁移掉（见 Enable-Autostart）
     return (Test-Path -LiteralPath $script:AutostartLnk) -or (Test-Path -LiteralPath $script:LegacyAutostartVbs)

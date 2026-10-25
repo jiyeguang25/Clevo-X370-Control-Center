@@ -201,31 +201,6 @@ function Get-AppSetting {
     }
 }
 
-function Get-AppSettingList {
-    [CmdletBinding()]
-    param([switch]$ShowBytes)
-    foreach ($kv in $script:AppSetting.GetEnumerator()) {
-        $r = Get-AppSetting $kv.Value
-        if ($ShowBytes) {
-            '{0,-24} {1,-8} p{2}/o{3,-4} rc={4} int={5}' -f $r.Name, $r.Id, $r.Page, $r.Offset, $r.Rc, $r.Int
-        }
-        else {
-            '{0,-24} {1,-8} p{2}/o{3,-4} rc={4} int={5}' -f $r.Name, $r.Id, $r.Page, $r.Offset, $r.Rc, $r.Int
-        }
-    }
-}
-
-function Get-DchuInt {
-    <#
-      .SYNOPSIS GetDCHU_Data_Integer - small command space, feature/support bits.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory, Position = 0)][int]$Command)
-    $v = 0
-    $rc = [ClevoHelper.DchuApi]::GetDCHU_Data_Integer($Command, [ref]$v)
-    [pscustomobject]@{ Id = ('0x{0:X}' -f $Command); Dec = $Command; Rc = ('0x{0:X8}' -f $rc); Int = $v }
-}
-
 function Get-WmiPackage {
     <#
       .SYNOPSIS GetDCHU_Data_Buffer - 256-byte block.  12 = fan/thermal telemetry, 13 = fan caps, 17 = customer id
@@ -235,15 +210,6 @@ function Get-WmiPackage {
     $buf = New-Object byte[] 256
     $rc = [ClevoHelper.DchuApi]::GetDCHU_Data_Buffer($Command, $buf)
     [pscustomobject]@{ Command = $Command; Rc = ('0x{0:X8}' -f $rc); Bytes = $buf }
-}
-
-function Format-HexDump {
-    param([byte[]]$Bytes, [int]$Length = 64)
-    for ($i = 0; $i -lt [Math]::Min($Length, $Bytes.Length); $i += 16) {
-        $chunk = $Bytes[$i..([Math]::Min($i + 15, $Bytes.Length - 1))]
-        '{0:X4}  {1,-47}  {2}' -f $i, (($chunk | ForEach-Object { $_.ToString('X2') }) -join ' '),
-            (($chunk | ForEach-Object { if ($_ -ge 32 -and $_ -lt 127) { [char]$_ } else { '.' } }) -join '')
-    }
 }
 
 # --- decoded telemetry (validated against the factory app's own IL) ---------

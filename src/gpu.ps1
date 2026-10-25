@@ -123,18 +123,3 @@ function Get-GpuTelemetry {
     $r
 }
 
-function Test-GpuTelemetry {
-    <#
-      .SYNOPSIS Diagnostic: which source answers, and with what numbers.
-    #>
-    [CmdletBinding()]
-    param()
-    $nvmlOk = Initialize-Nvml
-    $smi = Get-NvidiaSmiPath
-    [pscustomobject]@{
-        NvmlLoaded = $nvmlOk
-        NvmlDll    = $(if (Test-Path (Join-Path $env:WINDIR 'System32\nvml.dll')) { Join-Path $env:WINDIR 'System32\nvml.dll' } else { '(未找到)' })
-        SmiPath    = $(if ($smi) { $smi } else { '(未找到)' })
-        Reading    = Get-GpuTelemetry
-    }
-}

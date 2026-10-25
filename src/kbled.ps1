@@ -239,16 +239,6 @@ function Get-LedCmdCollection {
     $script:CmdCollection
 }
 
-function Get-LedId {
-    <#
-      .SYNOPSIS LED id encoding, confirmed by OpenRGB: ((row & 7) << 5) | (col & 0x1F)
-                rows 0..5 top-to-bottom (row 0 = F-key row), cols 0..19.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][ValidateRange(0, 7)][int]$Row, [Parameter(Mandatory)][ValidateRange(0, 31)][int]$Col)
-    [byte]((($Row -band 0x07) -shl 5) -bor ($Col -band 0x1F))
-}
-
 function Open-LedDevice {
     param([Parameter(Mandatory)]$Collection, [switch]$Write)
     $access = [uint32]2147483648
@@ -405,16 +395,6 @@ function Set-LedEffectColor {
     )
     if (-not $script:LedEffect.Contains($Effect)) { throw "unknown effect '$Effect'. Valid: $($script:LedEffect.Keys -join ', ')" }
     Write-LedReport (New-LedFrame ([byte]$script:LedEffect[$Effect]) $script:ColorCustom $R $G $B) -Apply:$Apply | Out-Null
-}
-
-function Set-LedRandomEffect {
-    <#
-      .SYNOPSIS Random-colour variant: d0 = 0x00 ("pick your own colour").
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory, Position = 0)][string]$Effect, [switch]$Apply)
-    if (-not $script:LedEffect.Contains($Effect)) { throw "unknown effect '$Effect'" }
-    Write-LedReport (New-LedFrame ([byte]$script:LedEffect[$Effect]) 0x00) -Apply:$Apply | Out-Null
 }
 
 function Save-LedModeToAppSettings {
@@ -623,15 +603,6 @@ function Set-LedMode {
         # the EC as a side effect of clicking a colour.
         [void](Save-LedModeToAppSettings -Mode $Mode -R $R -G $G -B $B -R2 $R2 -G2 $G2 -B2 $B2 -Speed $Speed -Apply:$Apply)
     }
-}
-
-function Disable-Led {
-    <#
-      .SYNOPSIS Alias for ClearColor (all LEDs off).
-    #>
-    [CmdletBinding()]
-    param([switch]$Apply)
-    Clear-Led -Apply:$Apply | Out-Null
 }
 
 function Save-LedToEc {

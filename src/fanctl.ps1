@@ -208,20 +208,6 @@ function Set-ClevoFanOffset {
     }
 }
 
-function Invoke-ClevoLoadFanDefaults {
-    [CmdletBinding()]
-    param([switch]$Apply)
-    Write-Host 'LoadFanDefaults'
-    Set-ClevoWmiValue -Sub $script:SUB_LoadFanDefaults -Value 0 -Apply:$Apply | Out-Null
-}
-
-function Invoke-ClevoAntiDustNow {
-    [CmdletBinding()]
-    param([switch]$Apply)
-    Write-Host 'AntiDust: run now'
-    Set-ClevoWmiValue -Sub $script:SUB_AntiDustNow -Value 0 -Apply:$Apply | Out-Null
-}
-
 function Clear-ClevoFanOverride {
     <#
       .SYNOPSIS Safety exit: hand fans back to the EC (Auto).

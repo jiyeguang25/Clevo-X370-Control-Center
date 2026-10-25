@@ -31,52 +31,6 @@ $script:MaxTempForMinDuty = 45  # below this the EC is allowed to idle the fan
 # come out right when the 2.55 factor is applied to percent, not to raw values.
 $script:MinDuty = 51           # raw equivalent of 20%, still used by fanctl.ps1 callers
 
-function Get-FanCurve {
-    <#
-      .SYNOPSIS Decode the live curve: raw table from block 13, percent table from page 4.
-    #>
-    [CmdletBinding()]
-    param()
-    $b13 = (Get-WmiPackage 13).Bytes
-    $p4 = (Get-AppSettingPage 4).Bytes
-
-    $fans = @()
-    for ($f = 0; $f -lt 3; $f++) {
-        # WARNING - the page-4 offsets below are an ASSUMPTION that has not been verified
-        # byte-exactly (duties at +0..+2, temps at +6..+8 per bank of 0x12). Measured
-        # evidence says the temps may sit one byte earlier: after a page-4 write the EC
-        # reloaded its runtime table as T2 = T1+1, T3 = T2 (`40,41,61` for a requested
-        # `40,61,88`), which is exactly what a one-byte-shifted read produces.
-        # Nothing writes page 4 any more for that reason; treat this as display-only, and
-        # trust block 13 (Get-FanRuntimeCurve, verified exact) as the source of truth.
-        $o = 0x10 + $f * 0x12
-        $fans += [pscustomobject]@{
-            Fan  = $script:FanNames[$f]
-            T1   = [int]$p4[$o + 6]
-            T2   = [int]$p4[$o + 7]
-            T3   = [int]$p4[$o + 8]
-            T4   = 100
-            D1   = [int]$p4[$o + 0]
-            D2   = [int]$p4[$o + 1]
-            D3   = [int]$p4[$o + 2]
-            D4   = 100
-            T2d  = [int]$p4[$o + 10]
-            T3d  = [int]$p4[$o + 11]
-            R12  = [int]$p4[$o + 12] -bor ([int]$p4[$o + 13] -shl 8)
-            R23  = [int]$p4[$o + 14] -bor ([int]$p4[$o + 15] -shl 8)
-            R34  = [int]$p4[$o + 16] -bor ([int]$p4[$o + 17] -shl 8)
-            RawD2 = [int]$b13[16 + $f * 8 + 1]
-            RawD3 = [int]$b13[16 + $f * 8 + 3]
-        }
-    }
-    [pscustomobject]@{
-        FanCount    = [int]$b13[12]
-        InitFanMode = [int]$b13[14]
-        ActiveMode  = [int]$p4[5]
-        Fans        = $fans
-    }
-}
-
 function Get-FanSlope {
     <#
       .SYNOPSIS R = round(((Dhi - Dlo) / (Thi - Tlo)) * 2.55 * 16), the factory formula.
@@ -152,53 +106,6 @@ function New-FanCurveFrame {
     $buf
 }
 
-function Convert-DutyPctToRawLocal([int]$Pct) {
-    # kept only for callers that dot-source fancurve.ps1 alone; the real one lives in
-    # dchu.ps1 so the UI thread has it too
-    Convert-DutyPctToRaw $Pct
-}
-
-function Write-FanCurve {
-    <#
-      .SYNOPSIS Send the curve via block 14, then switch the fan mode to Custom.
-                DRY RUN unless -Apply.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][byte[]]$Frame, [switch]$Apply, [switch]$SkipModeSwitch)
-    if (-not $Apply) {
-        Write-Host '  [dry-run] SetDCHU_DataEx(14, <256 B frame>, 256)'
-        Write-Host ('    [02..0D] ' + (($Frame[0x02..0x0D] | ForEach-Object { $_.ToString('X2') }) -join ' '))
-        Write-Host ('    [0E..1F] ' + (($Frame[0x0E..0x1F] | ForEach-Object { $_.ToString('X2') }) -join ' '))
-        return
-    }
-    # MUST be SetDCHU_DataEx: plain SetDCHU_Data(14,...) is rejected with rc=0x14,
-    # while DataEx returns 0x0E (command echo = success).
-    # The 4th parameter is the native side's OUTPUT BUFFER (a byte*), so it has to be a
-    # 256-byte array - passing `[ref]$someSingleByte` throws "Cannot convert PSReference[Byte]
-    # to System.Byte[]" and silently killed EVERY curve write. See the same fix in
-    # Write-FanFrame and in ClevoHelper.ps1's 'curve' handler.
-    $outBuf = New-Object byte[] 256
-    $rc = [ClevoHelper.DchuApi]::SetDCHU_DataEx(14, $Frame, 256, $outBuf)
-    Write-Host ('  [apply] SetDCHU_DataEx(14, frame, 256) -> rc=0x{0:X8} (0x0E = ok)' -f $rc)
-    if ($rc -ne 14) { throw ('block-14 write rejected, rc=0x{0:X}' -f $rc) }
-    if (-not $SkipModeSwitch) {
-        $b = New-Object byte[] 256; $b[0] = 6
-        [void][ClevoHelper.DchuApi]::SetDCHU_Data(121, [byte[]]@(6, 0, 0, 1), 4)
-        [void][ClevoHelper.DchuApi]::WriteAppSettings(4, 5, 1, $b)
-        Write-Host '  [apply] fan mode -> Custom (6)'
-    }
-}
-
-function Get-FanCurveFromStock {
-    <#
-      .SYNOPSIS The clamped copy of the curve currently active (safe no-op source).
-    #>
-    [CmdletBinding()]
-    param()
-    $c = Get-FanCurve
-    Test-FanCurve -Fans $c.Fans -MinDuty 0
-}
-
 function Set-AppSettingByte {
     <#
       .SYNOPSIS Patch individual bytes of an AppSetting page with a READ-MODIFY-WRITE.
@@ -223,46 +130,6 @@ function Set-AppSettingByte {
     if (-not $Apply) { Write-Host ('  [dry-run] WriteAppSettings(page={0}, 0, 256) patch {1}' -f $Page, ($desc -join ' ')); return }
     $rc = [ClevoHelper.DchuApi]::WriteAppSettings($Page, 0, 256, $buf)
     Write-Host ('  [apply] WriteAppSettings(page={0}, 0, 256) patch {1} -> rc=0x{2:X8}' -f $Page, ($desc -join ' '), $rc)
-}
-
-function Write-FanCurveAndPersist {
-    <#
-      .SYNOPSIS Push a curve to the EC (block 14) and select Custom mode.
-      .NOTES    It deliberately does NOT rewrite AppSettings page 4 any more.
-                The vendor's own fan app (FanSpeedSetting.exe ->
-                Interface_FanTable.WriteEC_Fan1_Fan2_table) saves a curve with a SINGLE call
-                to the EC - SetWMIPackageEx(4, frame) with frame[0]=41 and 112-byte per-fan
-                records at [16]/[128] - and never writes page 4. Our old full-page mirror
-                did, and writing page 4 makes the EC reload its runtime table through a
-                page-4 layout this project has never verified: measured outcome was
-                T2 = T1+1 and T3 = T2 (read back `40,41,61` instead of `40,61,88`), i.e. the
-                fans silently followed a curve nobody asked for.
-                If the page-4 layout is ever pinned down byte-exactly, persistence can be
-                added back here behind a switch - not before.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)]$Fans, [switch]$Apply)
-    $frame = New-FanCurveFrame $Fans
-    Write-FanCurve $frame -Apply:$Apply
-}
-
-function Get-FanCurveDutyAt {
-    <#
-      .SYNOPSIS Expected duty (%) for a fan at a given temperature, from a page-4 curve.
-      .NOTES    Linear between points; T1/D1 below T1; clamp to D4 above T3.
-                Used to sanity-check the EC against the persisted curve.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)]$Fan, [Parameter(Mandatory)][double]$Temp)
-    $t1 = [double]$Fan.T1; $t2 = [double]$Fan.T2; $t3 = [double]$Fan.T3
-    $d1 = [double]$Fan.D1; $d2 = [double]$Fan.D2; $d3 = [double]$Fan.D3; $d4 = [double]$Fan.D4
-    if ($Temp -le $t1) { return $d1 }
-    if ($Temp -le $t2) { if ($t2 -eq $t1) { return $d2 } return $d1 + ($Temp - $t1) * ($d2 - $d1) / ($t2 - $t1) }
-    if ($Temp -le $t3) { if ($t3 -eq $t2) { return $d3 } return $d2 + ($Temp - $t2) * ($d3 - $d2) / ($t3 - $t2) }
-    if ($t3 -ge 100) { return $d4 }
-    $v = $d3 + ($Temp - $t3) * ($d4 - $d3) / (100 - $t3)
-    if ($v -gt 100) { return 100 }
-    return $v
 }
 
 function Get-FanRuntimeCurve {
