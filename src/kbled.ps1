@@ -148,12 +148,43 @@ public static extern bool HidD_FreePreparsedData(IntPtr pp);
 public static extern int HidP_GetCaps(IntPtr pp, byte[] caps);
 [DllImport("hid.dll")]
 public static extern bool HidD_GetFeature(IntPtr h, byte[] report, int len);
-[DllImport("hid.dll")]
-public static extern bool HidD_SetFeature(IntPtr h, byte[] report, int len);
+
+// ---- 机型守卫（键盘灯这条路的唯一写入漏斗）----
+// 键盘灯走 HID，不经过 DCHU，所以 dchu.ps1 里的守卫管不到这里，必须单独守一道。
+// 判定逻辑复用 model-guard.ps1（同一份，不重复实现）。
+// 只读的 HidD_GetFeature 一律放行；HidD_SetFeature 改名成 Raw_ 后由下面的包装拦。
+public static bool GuardOk = true;
+public static string GuardWhy = "";
+
+static void GuardWrite() {
+    if (GuardOk) return;
+    throw new System.InvalidOperationException(
+        "【机型守卫】已拦截一次键盘灯写入，没有发任何 HID 帧。\n"
+        + "这台机器判定不是蓝天 Clevo X370SN：" + GuardWhy + "\n"
+        + "键盘灯的 VID/PID、帧长与命令字都是在这台机器上实测出来的，换机型照发可能没有反应或写坏灯控。\n"
+        + "确认风险自负可用 ClevoHelper.exe --force-write 启动，"
+        + "或设环境变量 CLEVOHELPER_FORCE_WRITE=1 后再跑。");
+}
+
+// ⚠️ EntryPoint 必须显式写：DllImport 默认拿**方法名**去 DLL 里找导出函数，
+// 改名成 Raw_HidD_SetFeature 之后默认就找不到（dchu.ps1 里踩过一次同样的坑）。
+[DllImport("hid.dll", EntryPoint = "HidD_SetFeature")]
+static extern bool Raw_HidD_SetFeature(IntPtr h, byte[] report, int len);
+public static bool HidD_SetFeature(IntPtr h, byte[] report, int len) {
+    GuardWrite();
+    return Raw_HidD_SetFeature(h, report, len);
+}
+
 [DllImport("hid.dll")]
 public static extern bool HidD_GetProductString(IntPtr h, byte[] buf, int len);
 '@
 }
+
+# 守卫判定在 model-guard.ps1（唯一判定点）。dchu.ps1 那边也这么做，
+# 两边都 dot-source 同一份，不会出现"两套判定标准"。
+. (Join-Path $PSScriptRoot 'model-guard.ps1')
+[ClevoHelper.LedNative]::GuardOk = [bool]$script:ModelIsX370SN
+[ClevoHelper.LedNative]::GuardWhy = [string]$script:ModelGuardWhy
 
 function Get-LedCollection {
     <#

@@ -27,6 +27,7 @@ if (-not $OutDir) { $OutDir = Join-Path $root 'dist' }
 # stay out of the shipped exe.
 $scripts = @(
     'ClevoHelper.ps1',    # the panel
+    'model-guard.ps1',    # 机型守卫：唯一判定点（dchu.ps1 与 kbled.ps1 都 dot-source 它）
     'dchu.ps1',           # DCHU bridge
     'fancurve.ps1',       # fan curve layer
     'fanctl.ps1',         # write layer
@@ -39,6 +40,19 @@ $scripts = @(
     'revert-worker.ps1'   # rollback watchdog worker
 )
 $libFile = Join-Path $src 'lib\InsydeDCHU.dll'
+# ---------------------------------------------------------------- version ----
+# 版本号的**唯一来源**是面板脚本里的 $script:AppVersion（运行时标题栏/关于页读的也是它）。
+# 这里把它读出来，写进 exe 的 AssemblyVersion/FileVersion —— 否则 exe 属性页永远是空的
+# "0.0.0.0"，用户报 bug 时报的版本号就没法核对（2026-10-25 之前就是这样：关于页写 1.0，
+# Release 却是 v1.3）。
+$panelScript = Join-Path $src 'ClevoHelper.ps1'
+$m = [regex]::Match((Get-Content -LiteralPath $panelScript -Raw), "\`$script:AppVersion\s*=\s*'([0-9]+(?:\.[0-9]+)+)'")
+if (-not $m.Success) { throw "could not read `$script:AppVersion from $panelScript" }
+$ver = $m.Groups[1].Value
+# 四段式：AssemblyVersion/FileVersion 要 x.y.z.w
+$verParts = @($ver.Split('.') + @('0','0','0'))[0..3]
+$ver4 = ($verParts -join '.')
+Write-Host ("version: {0} (from ClevoHelper.ps1)" -f $ver)
 # The ACPI bridge driver package (ACPI\CLV0001 / ACPI\CLV0002 + DCHUService). Bundled so the
 # app can install its own prerequisite instead of depending on the factory installer.
 $driverDir = Join-Path $src 'driver'
@@ -378,6 +392,19 @@ static class Program
         string mode = args.Length > 0 ? args[0].Trim().ToLowerInvariant() : "";
         LogEntry("mode resolved: [" + mode + "]");
 
+        // 机型守卫的逃生门。用**环境变量**这一条路传下去，而不是给面板再加一个开关：
+        //   * 面板、采样 runspace、revert-worker、以及它们再起的 powershell 全都继承环境块
+        //     （CreateProcess 传的 lpEnvironment 是 NULL = 继承），一处设置处处生效；
+        //   * 开关式（-ForceWrite）只能覆盖启动器直接拉起的那一个进程，revert-worker 那条
+        //     "写坏了自动回滚"的路会**没有守卫**——那恰好是最需要它的一条路。
+        // 设置完把 mode 清空，后面就按"正常启动"走。
+        if (mode == "--force-write")
+        {
+            Environment.SetEnvironmentVariable("CLEVOHELPER_FORCE_WRITE", "1");
+            LogEntry("force-write: model guard DISABLED for this session (env inherited by the panel)");
+            mode = "";
+        }
+
         if (mode == "--help" || mode == "-h" || mode == "/?")
         {
             MessageBox.Show(
@@ -388,7 +415,13 @@ static class Program
                 "  --autostart status       show start-at-logon state\r\n" +
                 "  --tray                   start, but go straight to the tray (no window)\r\n" +
                 "  --driver-status          show the DCHU driver/service state\r\n" +
-                "  --install-driver         install/repair the bundled DCHU driver (UAC)\r\n\r\n" +
+                "  --install-driver         install/repair the bundled DCHU driver (UAC)\r\n" +
+                "  --force-write            bypass the model guard (ONLY for a real X370SN; see below)\r\n\r\n" +
+                "The panel only allows EC writes on a Clevo X370SN (matched on the system\r\n" +
+                "serial number, e.g. NKX370SN...). On any other machine it still shows\r\n" +
+                "telemetry but refuses every write. --force-write turns that off - all the\r\n" +
+                "command bytes here were measured on one X370SN, so on a different model\r\n" +
+                "you can brick the EC. Read-only monitoring works either way.\r\n\r\n" +
                 "Installed automatically to: " + AppDir,
                 AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
@@ -700,6 +733,27 @@ static class Program
 '@
 Set-Content -LiteralPath $cs -Value $launcher -Encoding UTF8
 
+# --------------------------------------------------------- assembly info ----
+# 单独一个文件，而不是往上面的 here-string 里塞 —— 那个字符串里全是 C# 的花括号，
+# 用 -f 插值会把它们当占位符吃坏。编译时多带一个源文件就行。
+$asmInfo = Join-Path $work 'AssemblyInfo.cs'
+$asmInfoText = @"
+// 由 build-exe.ps1 自动生成 —— 版本号读自 ClevoHelper.ps1 的 `$script:AppVersion，不要手改。
+using System.Reflection;
+using System.Runtime.InteropServices;
+
+[assembly: AssemblyTitle("ClevoHelper")]
+[assembly: AssemblyProduct("ClevoHelper")]
+[assembly: AssemblyCompany("极夜光")]
+[assembly: AssemblyCopyright("Copyright © 极夜光")]
+[assembly: AssemblyDescription("Clevo X370SN control panel - monitoring, power/fan modes, GPU mode, keyboard RGB, charge limit")]
+[assembly: ComVisible(false)]
+[assembly: AssemblyVersion("$ver4")]
+[assembly: AssemblyFileVersion("$ver4")]
+[assembly: AssemblyInformationalVersion("$ver")]
+"@
+Set-Content -LiteralPath $asmInfo -Value $asmInfoText -Encoding UTF8
+
 # ----------------------------------------------------------------- compile ---
 $exe = Join-Path $OutDir 'ClevoHelper.exe'
 $resArgs = @()
@@ -715,13 +769,16 @@ $resArgs += ('/resource:"{0}",img.app.ico' -f $ico)
 $driverFiles = @(Get-ChildItem -LiteralPath $driverDir -File -ErrorAction SilentlyContinue)
 foreach ($f in $driverFiles) { $resArgs += ('/resource:"{0}",driver.{1}' -f $f.FullName, $f.Name) }
 
+# ⚠️ 两个源文件必须各自是一个数组元素：写成 @('"'+$a+'"', '"'+$b+'"') 时 PowerShell 的
+# 逗号优先级高于 +，会拼成"一个"带空格的路径，csc 报 CS2001 找不到源文件。
+$srcFiles = @(('"' + $cs + '"'), ('"' + $asmInfo + '"'))
 $cscArgs = @(
     '/nologo', '/target:winexe', '/platform:x64', '/optimize+',
     ('/out:"{0}"' -f $exe),
     ('/win32icon:"{0}"' -f $ico),
     '/reference:System.dll', '/reference:System.Windows.Forms.dll',
     '/reference:System.Management.dll', '/reference:System.Core.dll'
-) + $resArgs + @('"' + $cs + '"')
+) + $resArgs + $srcFiles
 
 Write-Host 'compiling...'
 # 先删旧产物再编译，并且检查 csc 的退出码：只判断 Test-Path 的话，编译失败时会"成功"输出

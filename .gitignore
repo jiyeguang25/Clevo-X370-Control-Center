@@ -11,6 +11,9 @@ show.request
 # ---- 渲染脚本临时生成的运行副本（diag-render-ui.ps1 每次自己重建）----
 src/_render-run.ps1
 
+# ---- 本地探针脚本（验证用，不是产品的一部分）----
+/_probe/
+
 # ---- 系统垃圾 ----
 Thumbs.db
 desktop.ini

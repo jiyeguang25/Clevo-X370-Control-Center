@@ -259,7 +259,12 @@ function Write-Dbg([string]$m) {
 # 不依赖任何外部文件 —— 和那个工具一样，"程序只有一个 EXE"这个约定不破。
 # 版本号的单一来源：这里改一处，标题栏和关于页都跟着变。
 $script:AppName = 'ClevoHelper'
-$script:AppVersion = '1.0'
+# ⚠️ 改这里要同步两处，否则"用户报的版本号"和"关于页显示的版本号"会打架：
+#   1) README 里写的当前版本
+#   2) GitHub Release 的 tag（发布脚本用 tools\Publish-Release.ps1）
+# build-exe.ps1 会**从这个文件里正则读出版本号**，写进 exe 的文件版本属性 ——
+# 所以这个字符串就是全项目唯一的版本来源（运行时显示 + exe 属性页都来自它）。
+$script:AppVersion = '1.3'
 $script:AuthorName = '极夜光'
 $script:AuthorMail = 'yeguang225@outlook.com'
 
@@ -1389,6 +1394,9 @@ $(New-SwitchRowXaml 'Tray' '启动收进托盘' $script:OnOffPills '不弹窗口
 $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.Label })
             </StackPanel>
 
+            <TextBlock x:Name="AboutGuardWarn" Foreground="#FFE38A6F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                       Visibility="Collapsed"
+                       Text="--"/>
             <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Text="功能：状态监控 · 电源模式 · 风扇曲线（可自定义节点） · 显卡模式（重启生效） · 键盘灯（静态/波/呼吸/循环 + 色盘取色） · 电池充电上限 · 亮度/触控板/Win 键/FnLock/数字键盘 · 托盘菜单 · 开机自启 · – / × 都是收进托盘（真退出：托盘右键 → 退出，或 Alt+F4）"/>
             <TextBlock x:Name="AboutNote" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
@@ -1436,7 +1444,7 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'AutoRow', 'VitalsSensors', 'VitalsModes', 'TabBtnState', 'TabBtnStateT', 'TabState', 'ControlPanel', 'StatePanel',
     'TabBtnPerf', 'TabBtnPerfT', 'TabBtnKb', 'TabBtnKbT', 'TabBtnMisc', 'TabBtnMiscT', 'TabPerf', 'TabKb', 'TabMisc', 'KbHint', 'MiscHint',
     'TabBtnAbout', 'TabBtnAboutT', 'TabAbout', 'AboutAvatarBrush', 'AboutName', 'AboutTitle', 'AboutMail', 'AboutTagline',
-    'AboutInfo', 'AboutNote', 'AboutFeatures', 'AboutDisclaimer', 'AboutChannelWarn',
+    'AboutInfo', 'AboutNote', 'AboutFeatures', 'AboutDisclaimer', 'AboutChannelWarn', 'AboutGuardWarn',
     'LedDirRow', 'LedDirPillRow', 'LedDirHint', 'WheelText2', 'WheelHint',
     'LedModeRow', 'LedColorRow', 'LedColorHint', 'LedSpeedRow',
     'ChargerRow', 'ChargerHint', 'ChargerCustom', 'ChgStartRow', 'ChgStopRow', 'ChgStartLabel', 'ChgStopLabel',
@@ -1559,6 +1567,10 @@ Write-Dbg ('cpu util counter: ' + $(if ($script:Sync.CpuUtilCounter) { $script:S
 # remember the state as it is right now, so [恢复初始] can undo the session
 $script:Sync.GpuSupported = @($script:GpuInfo.Supported)
 $script:Sync.GpuStaged = 0
+# 机型守卫的结论要传到界面上（关于页那条橙色警示）。dchu.ps1 会 dot-source
+# model-guard.ps1 并把 $script:ModelIsX370SN / $script:ModelGuardWhy 留在这个作用域里。
+$script:Sync.GuardWarn = $null
+$script:Sync.GuardForced = $false
 try {
     . $script:DchuPath
     $t0 = Get-ClevoTelemetry
@@ -1571,6 +1583,23 @@ try {
     Write-Dbg ('dchu dll: ' + $script:DchuDll)
 }
 catch { $script:Sync.StartState = $null; Write-Dbg ('start state failed: ' + $_.Exception.Message) }
+
+# ---- 机型守卫的界面投影 ----------------------------------------------------------
+# 三种情况各有各的说法（用户点了按钮没反应时，必须能在关于页看到原因）：
+#   * 走了逃生门   —— 明确写出"守卫已关闭"，免得用户以为保护还在；
+#   * 判定不通过   —— 写出判定依据 + 只读仍可用的说明；
+#   * 通过         —— 不显示任何东西（本机就是这种情况，平时永远看不到这条）。
+if (-not $script:ModelGuardDone -or $null -eq $script:ModelIsX370SN) {
+    # dchu.ps1 没加载成功（比如 DLL 缺失）—— 守卫没判定过，就别说守卫的事
+}
+elseif ($script:ModelGuardForced) {
+    $script:Sync.GuardForced = $true
+    $script:Sync.GuardWarn = '⚠ 机型守卫已关闭（--force-write）：本工具的命令字只在蓝天 Clevo X370SN 上实测过，当前允许写入。风险自负。'
+}
+elseif (-not $script:ModelIsX370SN) {
+    $script:Sync.GuardWarn = ('⚠ 已停止写入：本机不是蓝天 Clevo X370SN（{0}）。监控照常，但电源模式/风扇/键盘灯这些写入会被拦下。' -f $script:ModelGuardWhy)
+}
+Write-Dbg ('model guard: ok={0} forced={1} why={2}' -f $script:ModelIsX370SN, $script:ModelGuardForced, $script:ModelGuardWhy)
 
 # ---- 请求槽只有一个：启动注入必须排队，不能"同一轮里连发两个" ------------------------
 # $script:Sync.Pending 是**一个**槽，采样器 runspace 每轮循环只取走一个请求（采样器里
@@ -3254,6 +3283,13 @@ function Update-Panel {
             DataDir = (Split-Path $script:LogPath -Parent)
         }
         if ($n.AboutChannelWarn) { $n.AboutChannelWarn.Visibility = $(if ($s.Err) { 'Visible' } else { 'Collapsed' }) }
+        # 机型守卫：拦下写入时，关于页必须说清"为什么点按钮没反应"。
+        # 平时不显示（本机是 X370SN，永远不显示），只有判定不通过或走了逃生门才出现。
+        if ($n.AboutGuardWarn) {
+            $gw = $script:Sync.GuardWarn
+            $n.AboutGuardWarn.Visibility = $(if ($gw) { 'Visible' } else { 'Collapsed' })
+            if ($gw) { $n.AboutGuardWarn.Text = $gw }
+        }
         foreach ($k in $vals.Keys) {
             $tb = $n[('About_' + $k)]
             if ($tb) {

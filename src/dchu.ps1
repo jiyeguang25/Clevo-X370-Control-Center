@@ -82,6 +82,17 @@ foreach ($kv in $script:AppSetting.GetEnumerator()) { $script:AppSettingIdToName
 
 if (-not ('ClevoHelper.DchuApi' -as [type])) {
     $esc = $script:DchuDll.Replace('\', '\\')
+    # ------------------------------------------------------------------ 机型守卫 ----
+    # 为什么把守卫做在 DllImport 这一层，而不是每个 Set-* 函数里各写一遍：
+    #   * 写 EC 的口子有二十多个（panel / fanctl / fancurve / dchu / revert-worker），
+    #     逐处加检查一定会漏一个，而漏掉的那一个就是能改砖的那一个。
+    #   * 这里是**唯一**所有 EC 写入都必经的漏斗：三个写接口改名成 Raw_*、对外仍叫原名，
+    #     于是全部调用点（连 diag-*.ps1 一起）一行不改就自动受控。
+    #   * 读接口一律不拦 —— 换了机型依然要能打开面板看数字（README 里就是这么承诺的）。
+    # 判定见下面的 $script:ModelIsX370SN：本机 Win32_ComputerSystem.Model 是 "X17 Pro Max"
+    # （**不含** X370），真正的机型指纹在 Win32_ComputerSystemProduct.IdentifyingNumber
+    # （本机 = NKX370SNVG0000003C00530）。所以守卫认序列号里的 X370SN，不是认 Model。
+    # 键盘灯走 HID（kbled.ps1），不经过这里，那边单独守。
     Add-Type -Namespace ClevoHelper -Name DchuApi -MemberDefinition @"
 [System.Runtime.InteropServices.DllImport("$esc")]
 public static extern int GetDCHU_Data_Integer(int command, out int data);
@@ -89,19 +100,73 @@ public static extern int GetDCHU_Data_Integer(int command, out int data);
 public static extern int GetDCHU_Data_Buffer(int command, byte[] buffer);
 [System.Runtime.InteropServices.DllImport("$esc")]
 public static extern int ReadAppSettings(int page, int offset, int length, byte[] buffer);
-[System.Runtime.InteropServices.DllImport("$esc")]
-public static extern int WriteAppSettings(int page, int offset, int length, byte[] buffer);
+
+// ---- 守卫状态：静态字段，同一进程内所有 runspace 共享，采样线程也看得到 ----
+public static bool GuardOk = true;
+public static string GuardWhy = "";
+
+static void GuardWrite(string what) {
+    if (GuardOk) return;
+    throw new System.InvalidOperationException(
+        "【机型守卫】已拦截一次 EC 写入，没有写任何东西。\n"
+        + "这台机器判定不是蓝天 Clevo X370SN：" + GuardWhy + "\n"
+        + "本工具的全部命令字/字节布局都是在 X370SN 上一项项实测出来的，换机型照发可能改砖。\n"
+        + "只读监控不受影响。确认风险自负可用 ClevoHelper.exe --force-write 启动，"
+        + "或设环境变量 CLEVOHELPER_FORCE_WRITE=1 后再跑。\n"
+        + "被拦的调用：" + what);
+}
+
+// ⚠️ 这三个 Raw_* 必须显式写 EntryPoint：DllImport 默认拿**方法名**去 DLL 里找导出，
+// 改名成 Raw_* 之后就找不到了（实测报 "Unable to find an entry point named
+// 'Raw_SetDCHU_DataEx'"）。包装函数改了名，导出名必须跟着写回去。
+[System.Runtime.InteropServices.DllImport("$esc", EntryPoint = "WriteAppSettings")]
+static extern int Raw_WriteAppSettings(int page, int offset, int length, byte[] buffer);
+public static int WriteAppSettings(int page, int offset, int length, byte[] buffer) {
+    GuardWrite("WriteAppSettings(page=" + page + ", offset=" + offset + ")");
+    return Raw_WriteAppSettings(page, offset, length, buffer);
+}
+
 // WRITE path - only ever called through fanctl.ps1 / fancurve.ps1, gated behind -Apply
-[System.Runtime.InteropServices.DllImport("$esc")]
-public static extern int SetDCHU_Data(int command, byte[] buffer, int length);
+[System.Runtime.InteropServices.DllImport("$esc", EntryPoint = "SetDCHU_Data")]
+static extern int Raw_SetDCHU_Data(int command, byte[] buffer, int length);
+public static int SetDCHU_Data(int command, byte[] buffer, int length) {
+    GuardWrite("SetDCHU_Data(" + command + ", " + length + "B)");
+    return Raw_SetDCHU_Data(command, buffer, length);
+}
+
 // Needed for block 14 (custom fan curve) and for the graphics-mode switch.
 // The 4th parameter is an OUTPUT BUFFER, not a single byte. Declaring it as "out byte"
 // and passing [ref] to a 1-byte variable lets the native write past it - a latent
 // memory-corruption bug. It must be a byte[] so the marshaller hands over the whole array.
-[System.Runtime.InteropServices.DllImport("$esc")]
-public static extern int SetDCHU_DataEx(int command, byte[] buffer, int length, byte[] output);
+//
+// ⚠️ 这个接口**既读又写**，由帧首字节决定，所以不能整体拦。按**白名单放行**只认两个读帧：
+//      读（放行）  cmd=4 帧 { 0x15 ... } = 当前显卡模式 + 支持位图   { 0x1E ... } = FlexiCharger
+//      写（拦截）  cmd=4 帧 { 0x16 ... } = 暂存显卡模式             { 0x1F ... } = 充电阈值
+//                       帧 { 0x19 ... } = 键盘 Fn 设置
+//                  cmd=14          = 自定义风扇曲线（block 14）
+//   漏拦一个写入就是漏一个改砖口子，所以默认当写。新增读帧必须同时加进这里，
+//   否则会被误拦（会明确报错，不会静默放行）。
+[System.Runtime.InteropServices.DllImport("$esc", EntryPoint = "SetDCHU_DataEx")]
+static extern int Raw_SetDCHU_DataEx(int command, byte[] buffer, int length, byte[] output);
+public static int SetDCHU_DataEx(int command, byte[] buffer, int length, byte[] output) {
+    bool isRead = (command == 4 && buffer != null && buffer.Length > 0
+                   && (buffer[0] == 0x15 || buffer[0] == 0x1E));
+    if (!isRead) {
+        GuardWrite("SetDCHU_DataEx(cmd=" + command + ", frame[0]=0x"
+                   + (buffer != null && buffer.Length > 0 ? buffer[0].ToString("X2") : "??") + ")");
+    }
+    return Raw_SetDCHU_DataEx(command, buffer, length, output);
+}
 "@
 }
+
+# ---------------------------------------------------------------- 守卫判定 ----
+# 判定逻辑在 model-guard.ps1（唯一判定点，kbled.ps1 也用同一份）。
+# 这里只把结果灌进 DchuApi 的静态字段 —— C# 层没法读 PowerShell 变量，而守卫必须
+# 在**每次写入调用**时都生效（包括采样 runspace，它也 dot-source 一份 dchu.ps1）。
+. (Join-Path $PSScriptRoot 'model-guard.ps1')
+[ClevoHelper.DchuApi]::GuardOk = [bool]$script:ModelIsX370SN
+[ClevoHelper.DchuApi]::GuardWhy = [string]$script:ModelGuardWhy
 
 # --- reads -----------------------------------------------------------------
 
