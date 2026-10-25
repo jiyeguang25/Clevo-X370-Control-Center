@@ -170,7 +170,17 @@ powershell -STA -NoProfile -ExecutionPolicy Bypass -File .\src\ClevoHelper.ps1 -
 
 ```
 src\
-  ClevoHelper.ps1        面板本体（WPF，XAML 在脚本里；状态页/性能页/键盘灯/杂项/关于）
+  ClevoHelper.ps1        面板入口：XAML 骨架、控件注册、顶层流程、面板续页的加载
+  panel-core.ps1         面板续页：配置读写、日志、写入请求槽、XAML 小控件构造器
+  panel-fan.ps1          面板续页：风扇曲线
+  panel-led.ps1          面板续页：键盘灯
+  panel-mode.ps1         面板续页：显卡模式二次确认、杂项读写、开机自启
+  panel-about.ps1        面板续页：版本比较 + GitHub Release 查询
+  panel-paint.ps1        面板续页：重画（Update-Panel）
+  panel-sampler.ps1      面板续页：后台采样 runspace
+  panel-tray.ps1         面板续页：托盘
+  panel-reboot.ps1       面板续页：重启申请提示窗
+  panel-selftest.ps1     面板续页：自检（接线核查/真点/作用域检查）
   model-guard.ps1        机型守卫：唯一判定点（认序列号里的 X370SN；dchu.ps1 与 kbled.ps1 共用）
   dchu.ps1               原厂通道封装：读遥测、风扇表、电源模式、FlexiCharger、显卡模式
   fancurve.ps1 fanctl.ps1 风扇曲线：帧构造、限幅、斜率、写回读回
@@ -178,7 +188,7 @@ src\
   gpu.ps1                GPU 遥测（进程内 NVML，nvidia-smi 只作兜底）
   misc.ps1               屏幕亮度 / 触控板 / 数字键盘（非 DCHU 那几条）
   autostart.ps1          开机自启（装一份副本 + 写 Startup 快捷方式）
-  build-exe.ps1          打包单文件 exe（csc + 资源内嵌 + 多尺寸图标）
+  build-exe.ps1          打包单文件 exe（csc + 资源内嵌 + 多尺寸图标 + 版本号注入）
   Install-ClevoHelper.ps1 部署到 %LOCALAPPDATA% 并刷新快捷方式/AUMID/自启指向
   Install-DchuDriver.ps1 装/修自带的 ACPI 桥驱动包（要管理员）
   Set-ShortcutIdentity.ps1 任务栏/开始菜单身份（AppUserModelID + 快捷方式）
