@@ -165,6 +165,79 @@ function Get-BatteryState {
     catch { [pscustomobject]@{ Supported = $false; Error = $_.Exception.Message } }
 }
 
+# ---------------- 电池健康 ---------------------------------------------------
+function Get-BatteryHealth {
+    <#
+      .SYNOPSIS Design / full-charge capacity, cycle count, voltage. READ ONLY, slow (WMI+DCOM).
+      .DESCRIPTION 只在启动时调用一次（电池页用它算损耗）。
+      这里**必须**用 Get-WmiObject 而不是 Get-CimInstance：本机实测 root\wmi 的
+      BatteryStaticData 走 CIM 会抛「更具体的错误代码不包含发生的常规错误」，走 DCOM 读得到
+      （DesignedCapacity=103056 mWh）。同理 BatteryFullChargedCapacity=91352。
+      CycleCount 这台机器恒为 0（不报），所以健康度只按「满充/设计」，循环次数显示「—」。
+    #>
+    [CmdletBinding()]
+    param()
+    $r = [ordered]@{ Supported = $false }
+    try {
+        $sd = Get-WmiObject -Namespace root\wmi -Class BatteryStaticData -ErrorAction Stop | Select-Object -First 1
+        if ($sd -and [int]$sd.DesignedCapacity -gt 0) {
+            $r.Supported = $true
+            $r.Design = [int]$sd.DesignedCapacity
+            try {
+                $fc = Get-WmiObject -Namespace root\wmi -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1
+                if ($fc -and [int]$fc.FullChargedCapacity -gt 0) {
+                    $r.Full = [int]$fc.FullChargedCapacity
+                    $r.Health = [Math]::Round((100.0 * $r.Full / $r.Design), 1)
+                }
+            } catch { }
+            try {
+                $cc = Get-WmiObject -Namespace root\wmi -Class BatteryCycleCount -ErrorAction Stop | Select-Object -First 1
+                if ($cc -and [int]$cc.CycleCount -gt 0) { $r.Cycles = [int]$cc.CycleCount }
+            } catch { }
+            try {
+                $st = Get-WmiObject -Namespace root\wmi -Class BatteryStatus -ErrorAction Stop | Select-Object -First 1
+                if ($st) {
+                    if ([int]$st.RemainingCapacity -gt 0) { $r.Now = [int]$st.RemainingCapacity }
+                    if ([int]$st.Voltage -gt 0) { $r.VoltMv = [int]$st.Voltage }
+                }
+            } catch { }
+        }
+    }
+    catch { $r.Error = $_.Exception.Message }
+    [pscustomobject]$r
+}
+
+# ---------------- 输入设备 ---------------------------------------------------
+function Get-InputDevices {
+    <#
+      .SYNOPSIS 键盘灯走的是哪一路 HID、触控板挂在哪条总线上。READ ONLY, slow (PnP enumeration).
+      .DESCRIPTION 启动时读一次。键盘灯判据与 kbled.ps1 完全相同（VID_048D&PID_8910 = ITE 829x），
+      因为那一路上写命令的正是它；这里显示出来是为了"灯不亮时先看有没有认到设备"。
+    #>
+    [CmdletBinding()]
+    param()
+    $kb = '--'
+    $tp = '--'
+    try {
+        $dev = Get-PnpDevice -Class HIDClass -ErrorAction Stop |
+            Where-Object { $_.InstanceId -match 'VID_048D&PID_8910' } | Select-Object -First 1
+        $kb = $(if ($dev) { 'VID_048D / PID_8910 · ITE 829x' } else { '未认到（键盘灯会失效）' })
+    }
+    catch { $kb = '查询失败' }
+    try {
+        $m = Get-PnpDevice -Class Mouse -ErrorAction Stop |
+            Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match 'HID|I2C|PS2' } |
+            Sort-Object -Property @{ Expression = { $(if ($_.InstanceId -match '^I2C') { 0 } elseif ($_.InstanceId -match '^PS2') { 1 } else { 2 }) } } |
+            Select-Object -First 1
+        if ($m) {
+            $bus = $(if ($m.InstanceId -match '^I2C') { 'I2C HID' } elseif ($m.InstanceId -match '^PS2') { 'PS/2' } else { 'HID' })
+            $tp = ('{0} · {1}' -f $m.FriendlyName, $bus)
+        }
+    }
+    catch { $tp = '查询失败' }
+    [pscustomobject]@{ Keyboard = $kb; Touchpad = $tp }
+}
+
 # ---------------- 屏幕亮度 ---------------------------------------------------
 function Get-ScreenBrightness {
     <#

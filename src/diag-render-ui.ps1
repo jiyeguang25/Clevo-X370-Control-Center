@@ -1,4 +1,4 @@
-﻿# diag-render-ui.ps1 - render the panel to a PNG without opening a window.
+# diag-render-ui.ps1 - render the panel to a PNG without opening a window.
 #
 # Why: the layout has to be reviewable when the desktop is busy (a full-screen game on
 # top of everything), and an off-screen render is also the only way to get a stable,
@@ -11,7 +11,7 @@
 # Usage: powershell -STA -NoProfile -ExecutionPolicy Bypass -File diag-render-ui.ps1 [-Tab perf|kb|misc]
 # Output: ..\artifacts\panel-render.png
 [CmdletBinding()]
-param([ValidateSet('state', 'perf', 'kb', 'misc', 'about')][string]$Tab = 'state',
+param([ValidateSet('state', 'perf', 'cool', 'kb', 'batt', 'misc', 'sys', 'about')][string]$Tab = 'state',
       [string]$LedMode = '',          # keyboard mode key to picture (e.g. scan / random)
       [string]$OutFile = '')          # defaults to artifacts\panel-render.png
 $ErrorActionPreference = 'Stop'

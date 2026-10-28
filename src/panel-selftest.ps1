@@ -43,7 +43,7 @@ function Get-ExpectedWiring {
     & $one 'ColorWheel' 'Up'
     & $many 'Auto' $script:AutostartPills.Count 'Up'
     & $many 'Tray' 2 'Up'
-    foreach ($t in 'State', 'Perf', 'Kb', 'Misc', 'About') { & $one "TabBtn$t" 'Up' }
+    foreach ($t in 'State', 'Perf', 'Cool', 'Kb', 'Batt', 'Misc', 'Sys', 'About') { & $one "TabBtn$t" 'Up' }
     & $many 'Fan' $script:FanPills.Count 'Up'
     foreach ($f in 'Ct2T', 'Ct2D', 'Ct3T', 'Ct3D') { & $one "${f}Minus" 'Up'; & $one "${f}Plus" 'Up' }
     & $one 'MinBtn' 'Down'

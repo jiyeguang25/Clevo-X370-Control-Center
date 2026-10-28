@@ -1,4 +1,4 @@
-# panel-paint.ps1 —— 重画：把采样快照刷到界面（Update-Panel 及其小工具）
+﻿# panel-paint.ps1 —— 重画：把采样快照刷到界面（Update-Panel 及其小工具）
 #
 # 由 ClevoHelper.ps1 用 dot-source 载入：所有 panel-*.ps1 共享**同一个脚本作用域**，
 # 不是 PowerShell 模块（没有 Import-Module、没有独立作用域）。所以：
@@ -432,26 +432,31 @@ function Update-Panel {
     else { $n.GpuRow.Visibility = 'Collapsed'; $n.GpuRebootBtn.Visibility = 'Collapsed' }
 
     # ---- 标签页 ----
-    # FOUR tabs, and every one of them gets the same-sized box: 状态 lives in StatePanel and
-    # the other three share ControlPanel, whose height/padding/margins are identical. So the
-    # window never resizes when tabs are switched (user request: 四个界面长宽一样).
+    # 七个页面，盒子尺寸相同：概览住在 StatePanel，其余六个共用 ControlPanel（高/内边距/外边距
+    # 完全一致），所以切页签时窗口不会变大小。
     $tab = [string]$script:LedSel.Tab
     $n.TabState.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
     $n.StatePanel.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
     $n.TabPerf.Visibility = $(if ($tab -eq 'perf') { 'Visible' } else { 'Collapsed' })
+    $n.TabCool.Visibility = $(if ($tab -eq 'cool') { 'Visible' } else { 'Collapsed' })
     $n.TabKb.Visibility = $(if ($tab -eq 'kb') { 'Visible' } else { 'Collapsed' })
+    $n.TabBatt.Visibility = $(if ($tab -eq 'batt') { 'Visible' } else { 'Collapsed' })
     $n.TabMisc.Visibility = $(if ($tab -eq 'misc') { 'Visible' } else { 'Collapsed' })
+    $n.TabSys.Visibility = $(if ($tab -eq 'sys') { 'Visible' } else { 'Collapsed' })
     $n.TabAbout.Visibility = $(if ($tab -eq 'about') { 'Visible' } else { 'Collapsed' })
     $n.ControlPanel.Visibility = $(if ($tab -eq 'state') { 'Collapsed' } else { 'Visible' })
     Set-Pill $n.TabBtnState $n.TabBtnStateT ($tab -eq 'state') '#FFB98BFF'
     Set-Pill $n.TabBtnPerf $n.TabBtnPerfT ($tab -eq 'perf') '#FFB98BFF'
+    Set-Pill $n.TabBtnCool $n.TabBtnCoolT ($tab -eq 'cool') '#FFB98BFF'
     Set-Pill $n.TabBtnKb $n.TabBtnKbT ($tab -eq 'kb') '#FFB98BFF'
+    Set-Pill $n.TabBtnBatt $n.TabBtnBattT ($tab -eq 'batt') '#FFB98BFF'
     Set-Pill $n.TabBtnMisc $n.TabBtnMiscT ($tab -eq 'misc') '#FFB98BFF'
+    Set-Pill $n.TabBtnSys $n.TabBtnSysT ($tab -eq 'sys') '#FFB98BFF'
     Set-Pill $n.TabBtnAbout $n.TabBtnAboutT ($tab -eq 'about') '#FFB98BFF'
-    # the sampler only reads the 杂项 channels while that page is the one on screen
+    # the sampler only reads the 杂项通道 while 设备/电池 页在看
     # （启动时若还欠一次完整杂项读 —— 为了跟"我的配置"比充电窗口 —— 就一直要点着它，
     #   读完那次由采样器把 NeedFullMisc 清掉，见采样器里那行）
-    $script:Sync.WantMisc = ($tab -eq 'misc') -or [bool]$script:Sync.NeedFullMisc
+    $script:Sync.WantMisc = ($tab -eq 'misc' -or $tab -eq 'batt') -or [bool]$script:Sync.NeedFullMisc
     # 状态页只要一个亮度值（滑杆在那里），所以单独给它一路轻量读取：没必要为了一个数字
     # 把触控板/电池/充电器都拉一遍，那会把采样周期拖慢。
     $script:Sync.WantBright = ($tab -eq 'state')
@@ -465,21 +470,21 @@ function Update-Panel {
         Set-Pill $n["Auto$i"] $n["Auto${i}T"] ([bool]$script:AutostartPills[$i].On -eq (Get-AutostartState)) '#FF6FE38A'
     }
 
-    # ---- 常显信息条 ----
-    # Two lines that stay visible on every tab: the sensors, and the active choices. Both are
-    # monospace with FIXED-WIDTH fields ({0,5} etc.). Proportional text made every later field
-    # slide sideways whenever a digit count changed (4,998 -> 5,126 RPM), which reads as "the
-    # text is not aligned". The two lines are also what made an 800px-wide strip possible;
-    # in the portrait window the same text simply wraps into two shorter lines.
-    $n.VitalsSensors.Text = 'CPU {0,3}°C {1,6:N0} RPM {2,3}% {3,5}W' -f `
-        $s.CpuTemp, $s.CpuFanRpm, $(if ($null -ne $s.CpuUtil) { $s.CpuUtil } else { '--' }),
-        $(if ($null -ne $s.CpuWatts) { '{0:N0}' -f $s.CpuWatts } else { '--' })
-    $n.VitalsModes.Text = 'GPU {0,3}°C {1,6:N0} RPM {2,3}%   ·   {3} · {4} · {5} · {6}' -f `
-        $s.GpuTemp, $s.GpuFanRpm, $(if ($null -ne $s.GpuUtil) { $s.GpuUtil } else { '--' }),
-        $(if ($powerActive) { $powerActive } else { $s.PowerModeName }),
-        $(if ($fanActive) { $fanActive } else { $s.FanModeName }),
-        $s.GpuModeName,
-        $(if ($kbActive) { $kbActive } else { '—' })
+    # ---- 标题栏温度 ----
+    # 原来这里有两条常显信息（传感器一行、当前档位一行），每个页面顶部都占一条。用户直接问了
+    # 「为什么每个页面上都要有概览这一栏」—— 因为概览页本来就把同样的数字放大显示了一遍。
+    # 现在只留最该随时看见的一个数：CPU / GPU 温度，放进标题栏；档位信息搬去性能页的
+    # 「当前生效」卡（就在它上面那些按钮旁边，比放在标题下面更符合"点了有没有生效"的疑问）。
+    $n.TitleTemps.Text = 'CPU {0}° · GPU {1}°' -f `
+        $(if ($null -ne $s.CpuTemp) { [int]$s.CpuTemp } else { '--' }),
+        $(if ($null -ne $s.GpuTemp) { [int]$s.GpuTemp } else { '--' })
+
+    # ---- 性能页「当前生效」：四个读回值 ----
+    # 无门禁：只有四个文本框赋值，代价可忽略；门禁反而会让切页那一帧看到上一页的旧值。
+    $n.NowPower.Text = $(if ($powerActive) { $powerActive } else { [string]$s.PowerModeName })
+    $n.NowFan.Text = $(if ($fanActive) { $fanActive } else { [string]$s.FanModeName })
+    $n.NowGpu.Text = [string]$s.GpuModeName
+    $n.NowKb.Text = $(if ($kbActive) { $kbActive } else { '—' })
 
     if ($tab -eq 'kb') {
         $sel = $script:LedSel
@@ -568,7 +573,7 @@ function Update-Panel {
             } else { '' }) + $script:KbHintBase
     }
 
-    if ($tab -eq 'about') {
+    if ($tab -eq 'sys') {
         # 信息行的值全部来自真实来源：EXE 的构建时间取自 EXE 自己的时间戳，路径取自本次运行
         # 的实际位置，DCHU 通道状态取自 dchu.ps1 真的选中的那个 DLL。没有"写死的简介"。
         $exePath = $(if ($script:HostExe -and (Test-Path -LiteralPath $script:HostExe)) { $script:HostExe }
@@ -622,10 +627,9 @@ function Update-Panel {
         }
     }
 
-    if ($tab -eq 'misc') {
-        # Every row here shows the state that was READ BACK, never the last click: the whole
-        # point of this tab is that the hardware is the answer. $s.Misc is null until the
-        # sampler's first misc read (about a second after the tab is opened).
+    if ($tab -eq 'batt') {
+        # 电池页（从原「杂项」拆出来的）：电池条 + 原厂充电三选一 + 自定义阈值窗口。
+        # 每一行显示的都是读回值，不是刚才点的那个——这一页的意义就在于硬件说什么。
         $mi = $s.Misc
         $sel = $script:MiscSel
 
@@ -685,6 +689,25 @@ function Update-Panel {
             $n["ChgE$i"].IsHitTestVisible = $clickable
         }
 
+        # ---- 电池健康（启动时读一次；读不到就显示「—」，不编数字）----
+        $bh = $script:BattHealth
+        if ($bh -and $bh.Supported) {
+            $n.BhDesign.Text = ('{0:N1} Wh' -f ($bh.Design / 1000.0))
+            $n.BhFull.Text = $(if ($bh.Full) { '{0:N1} Wh' -f ($bh.Full / 1000.0) } else { '—' })
+            $n.BhHealth.Text = $(if ($bh.Health) { '{0:N1}%' -f $bh.Health } else { '—' })
+            $n.BhCycles.Text = $(if ($bh.Cycles) { [string]$bh.Cycles } else { '—' })
+            $n.BhNow.Text = $(if ($bh.Now) { '{0:N1} Wh' -f ($bh.Now / 1000.0) } else { '—' })
+            $n.BhVolt.Text = $(if ($bh.VoltMv) { '{0:N2} V' -f ($bh.VoltMv / 1000.0) } else { '—' })
+        }
+        else {
+            foreach ($k in 'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt') { $n[$k].Text = '—' }
+        }
+    }
+
+    if ($tab -eq 'misc') {
+        # 设备页（原「杂项」剩下的部分）：五个开关，显示的都是读回值。
+        $mi = $s.Misc
+
         # ---- 五个开关：显示的是读回值 ----
         $switchState = @{
             Tp = $(if ($null -ne $mi) { $mi.TouchPad } else { $null })
@@ -704,7 +727,15 @@ function Update-Panel {
                 $n["$pre$i"].Opacity = $(if ($null -eq $cur) { 0.4 } else { 1.0 })
             }
         }
-        # 启动收进托盘：读的是设置文件（不是 EC，所以没有"未知"状态）
+        # ---- 输入设备（启动时读一次，值不会变）----
+        $n.DevKb.Text = [string]$script:InputInfo.Keyboard
+        $n.DevTp.Text = [string]$script:InputInfo.Touchpad
+
+        # 启动收进托盘那两颗药丸搬到了系统页（见下面 sys 块）：它读的是设置文件，
+        # 不是 EC，和这五个硬件开关不是一回事。
+    }
+
+    if ($tab -eq 'sys') {
         for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) {
             Set-Pill $n["Tray$i"] $n["Tray${i}T"] ([bool]$script:OnOffPills[$i].On -eq [bool]$script:Settings.StartToTray) '#FF6FE38A'
         }
@@ -736,6 +767,13 @@ function Update-Panel {
     }
 
     $n.ModeText.Text = '风扇偏移 {0,-2}  ·  实际采样 {1} Hz  ·  写入串行化' -f $s.FanOffset, $(if ($script:Sync.RateHz) { $script:Sync.RateHz } else { '--' })
+    # 散热页的当前读数（EC 回读）。温度/转速/占空比都可能暂时为 $null，统一显示 --。
+    $n.CoolCpuTemp.Text = $(if ($null -ne $s.CpuTemp) { '{0}°C' -f [int]$s.CpuTemp } else { '--' })
+    $n.CoolCpuRpm.Text  = $(if ($null -ne $s.CpuFanRpm) { '{0:N0}' -f $s.CpuFanRpm } else { '--' })
+    $n.CoolCpuDuty.Text = $(if ($null -ne $s.CpuFanDuty) { '{0}%' -f $s.CpuFanDuty } else { '--' })
+    $n.CoolGpuTemp.Text = $(if ($null -ne $s.GpuTemp) { '{0}°C' -f [int]$s.GpuTemp } else { '--' })
+    $n.CoolGpuRpm.Text  = $(if ($null -ne $s.GpuFanRpm) { '{0:N0}' -f $s.GpuFanRpm } else { '--' })
+    $n.CoolGpuDuty.Text = $(if ($null -ne $s.GpuFanDuty) { '{0}%' -f $s.GpuFanDuty } else { '--' })
     if ($s.CurveHealth -eq 'ok') {
         # a positive offset is normal (the EC controls on a higher internal temperature than
         # the one this panel reads), so it is reported as "生效中", not as an error

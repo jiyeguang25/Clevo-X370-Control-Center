@@ -18,3 +18,6 @@ src/_render-run.ps1
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 版面重排时按轮留下的源码备份（只在本地用）
+src/*.bak-*
