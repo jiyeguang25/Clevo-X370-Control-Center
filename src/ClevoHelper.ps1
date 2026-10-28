@@ -753,7 +753,7 @@ $xaml = @"
              fixed height, so switching tabs never changes the window size (user request:
              四个界面的长宽一样). The CPU/GPU cards are stacked instead of side by side -
              two cards cannot both fit across a portrait window. -->
-        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="490">
+        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="470">
         <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
           <StackPanel>
           <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,0,0,8" Padding="18,14,18,12">
@@ -921,7 +921,7 @@ $xaml = @"
              win=468x920  StatePanel=470 ControlPanel=470     ← 修复前
              win=468x662  StatePanel=470 ControlPanel=0(c)    ← 重画之后
            把默认值和"默认标签页"对齐，首帧就等于最终帧，跳变彻底消失。 -->
-      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="490" Visibility="Collapsed">
+      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="470" Visibility="Collapsed">
         <StackPanel>
           <!-- ============ 性能与散热 ============ -->
           <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
@@ -994,7 +994,11 @@ $(New-PillXaml 'Gpu' $script:GpuPills)
                 <TextBlock Text="场景做什么" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,6"/>
                 $(foreach ($sp in $script:ScenePills) {
                     $kbTxt = if ($sp.Kb -eq 'off') { '键盘灯关' } else { '键盘灯 {0},{1},{2}' -f $sp.R,$sp.G,$sp.B }
-                    $line = '· {0}：电源={1} 风扇={2} {3} 亮度={4}%' -f $sp.Label, $sp.Power, $sp.Fan, $kbTxt, $sp.Bright
+                    $pn = ($script:PowerPills | Where-Object { $_.Id -eq $sp.Power } | Select-Object -First 1)
+                    $fn = ($script:FanPills | Where-Object { $_.Mode -eq $sp.Fan } | Select-Object -First 1)
+                    $pLabel = if ($pn) { $pn.Label } else { '电源 ' + $sp.Power }
+                    $fLabel = if ($fn) { $fn.Label } else { '风扇 ' + $sp.Fan }
+                    $line = '· {0}：{1} · 风扇{2} · {3} · 亮度 {4}%' -f $sp.Label, $pLabel, $fLabel, $kbTxt, $sp.Bright
                     '<TextBlock Text="' + $line + '" Foreground="#FF8A93A6" FontSize="10.5" FontFamily="Consolas" Margin="0,0,0,3"/>'
                   })
               </StackPanel>
@@ -1144,7 +1148,7 @@ $(New-PillXaml 'Spd' $script:LedSpeedPills 56)
 $(New-SwitchRowXaml 'Tp' '触控板' $script:OnOffPills '注册表 + 原厂通知')
 $(New-SwitchRowXaml 'Wk' 'Win 键' $script:EnablePills '误触不会切走游戏' 56)
 $(New-SwitchRowXaml 'Fl' 'FnLock' $script:OnOffPills 'F1-F12 免按 Fn')
-$(New-SwitchRowXaml 'Ws' 'Win/Fn 交换' $script:SwapPills '左下角两键对调')
+$(New-SwitchRowXaml 'Ws' 'Win/Fn' $script:SwapPills '交换：左下角两键对调')
 $(New-SwitchRowXaml 'Nl' '数字键盘' $script:OnOffPills '系统 NumLock')
 
             <!-- 输入设备：启动时读一次（设备枚举慢，不进采样循环）。键盘灯走的是哪一路 HID、
@@ -1365,6 +1369,15 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
               </Grid>
             </StackPanel>
 
+
+            <!-- 保养建议：按当前电池状态真算出来的几句话（不是固定文案）。
+                 判据写在 panel-paint.ps1 的 batt 分支里，这样文案和判据不会分家。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,6,0,0">
+              <StackPanel>
+                <TextBlock Text="保养建议" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,5"/>
+                <TextBlock x:Name="BattAdvice" Text="--" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="17"/>
+              </StackPanel>
+            </Border>
             </StackPanel>           </ScrollViewer>
 
 
@@ -1407,7 +1420,7 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
               <StackPanel>
                 <TextBlock Text="操作提示" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
                 <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
-                           Text="· 托盘图标双击 = 打开面板，右键 = 菜单（电源/风扇/键盘灯都在那）&#10;· 右上 – 和 × 都是收进托盘，不是退出；真退出用 Alt+F4 或托盘右键&#10;· 换机器被误判机型时：ClevoHelper.exe --force-write 可临时关闭写入守卫"/>
+                           Text="· 托盘图标双击 = 打开面板，右键 = 菜单（电源/风扇/键盘灯都在那）&#10;· 右上 – 和 × 都是收进托盘，不是退出；真退出用 Alt+F4 或托盘右键&#10;· 非 X370SN 机型：加 --force-write 启动可临时放行写入"/>
               </StackPanel>
             </Border>
 
@@ -1498,7 +1511,7 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'LedModeRow', 'LedColorRow', 'LedColorHint', 'LedSpeedRow',
     'ChargerRow', 'ChargerHint', 'ChargerCustom', 'ChgStartRow', 'ChgStopRow', 'ChgStartLabel', 'ChgStopLabel',
     'ColorWheelBox', 'ColorWheel', 'WheelLayer', 'WheelMark', 'WheelPick', 'WheelText',
-    'BattBar', 'BattText',
+    'BattBar', 'BattText', 'BattAdvice',
     'BrightSlider', 'BrightVal',
     'LedColorLabel', 'CustHint', 'Ct2RowLabel', 'Ct3RowLabel',
     'CpuTempUnit', 'GpuTempUnit', 'Ct2TMinus', 'Ct2TVal', 'Ct2TUnit', 'Ct2TPlus', 'Ct2DMinus', 'Ct2DVal', 'Ct2DUnit', 'Ct2DPlus',

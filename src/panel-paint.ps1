@@ -717,10 +717,33 @@ function Update-Panel {
             $n.BhCycles.Text = $(if ($bh.Cycles) { [string]$bh.Cycles } else { '—' })
             $n.BhNow.Text = $(if ($bh.Now) { '{0:N1} Wh' -f ($bh.Now / 1000.0) } else { '—' })
             $n.BhVolt.Text = $(if ($bh.VoltMv) { '{0:N2} V' -f ($bh.VoltMv / 1000.0) } else { '—' })
+
         }
         else {
             foreach ($k in 'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt') { $n[$k].Text = '—' }
         }
+        # ---- 保养建议（刻意放在健康度判断之外：读不到健康度也要给建议）----
+        # 每条都由当前读数或设置推出来，没有写死的文案；电池状态变量是 $bt（= $mi.Battery）。
+        $advLines = @()
+        $pct = $(if ($bt -and $bt.Supported) { [int]$bt.Percent } else { -1 })
+        $online = [bool]($bt -and $bt.OnAc)
+        $hp = $(if ($bh -and $bh.Health) { [double]$bh.Health } else { 0 })
+        if ($hp -and $hp -lt 80) { $advLines += ('健康度只有 {0:N1}%，续航会明显缩水，可以考虑换电池' -f $hp) }
+        if ($mi -and $mi.ChargerEnabled -and [int]$mi.ChargerStop -ge 95) {
+            $advLines += ('充电上限现在是 {0}%，长期插电建议降到 70-80%' -f [int]$mi.ChargerStop)
+        }
+        if ($online -and $pct -ge 90) {
+            $advLines += ('当前已充到 {0}%，满电长时间插着会加速老化；插电为主就把上限设低一点' -f $pct)
+        }
+        if (-not $online -and $pct -ge 0 -and $pct -le 20) {
+            $advLines += ('电量只剩 {0}%，该插电了（省电模式会把独显程序关掉）' -f $pct)
+        }
+        if ($online -and $pct -ge 0 -and $pct -lt 90 -and $mi -and $mi.ChargerEnabled) {
+            $advLines += ('现在 {0}%，上限 {1}%：到这个点就停充，属于正常，不用管' -f $pct, [int]$mi.ChargerStop)
+        }
+        if ($bh -and -not $bh.Cycles) { $advLines += '本机不报循环次数，寿命只能按容量比（满充/设计）判断' }
+        if ($advLines.Count -eq 0) { $advLines += '没有发现需要提醒的地方' }
+        $n.BattAdvice.Text = (($advLines | ForEach-Object { '· ' + $_ }) -join [Environment]::NewLine)
     }
 
     if ($tab -eq 'misc') {
@@ -803,8 +826,8 @@ function Update-Panel {
     $n.CoolGpuDuty.Text = $(if ($null -ne $s.GpuFanDuty) { '{0}%' -f $s.GpuFanDuty } else { '--' })
 
     # 功耗：采样器已经从 EC/PDH 拿到，这里只是再摆一份到散热页，方便和风扇曲线对照。
-    $n.CoolCpuPower.Text = $(if ($null -ne $s.CpuPower) { '{0:N1} W' -f [double]$s.CpuPower } else { '--' })
-    $n.CoolGpuPower.Text = $(if ($null -ne $s.GpuPower) { '{0:N1} W' -f [double]$s.GpuPower } else { '--' })
+    $n.CoolCpuPower.Text = $(if ($null -ne $s.CpuWatts) { '{0:N0} W' -f [double]$s.CpuWatts } else { '--' })
+    $n.CoolGpuPower.Text = $(if ($null -ne $s.GpuWatts) { '{0:N0} W' -f [double]$s.GpuWatts } else { '--' })
     if ($s.CurveHealth -eq 'ok') {
         # a positive offset is normal (the EC controls on a higher internal temperature than
         # the one this panel reads), so it is reported as "生效中", not as an error
