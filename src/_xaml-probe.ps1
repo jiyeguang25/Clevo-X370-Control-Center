@@ -70,3 +70,16 @@ foreach ($k in 'Dev_Model', 'Dev_Serial', 'Dev_Bios', 'Dev_Windows', 'RunUp', 'R
     else { Write-Host ('  {0,-12} 就位  Text="{1}"' -f $k, $c.Text) }
 }
 Write-Host 'XAML-PROBE DONE'
+
+# ---- 8) 每页内容实际需要的尺寸（纯测量，不 Show） ----
+# 宽度链：窗口 468 − 根 Border 外边距 16×2 = 436；页框 Padding 20+20 = 396；页内 Padding 右边 6 → 390
+Write-Host '--- 每页期望高度（宽 390，页框可用高 464）---'
+foreach ($t2 in 'State', 'Perf', 'Cool', 'Kb', 'Batt', 'Misc', 'Sys', 'About') {
+    $sv = $win.FindName("Tab$t2")
+    if ($null -eq $sv) { continue }
+    $panel = $sv.Content
+    $panel.Measure((New-Object System.Windows.Size(390, [double]::PositiveInfinity)))
+    $h = [Math]::Round($panel.DesiredSize.Height, 1)
+    $mark = if ($h -le 464) { '✔ 放得下' } else { '✘ 超出 ' + [Math]::Round($h - 464, 1) + 'px' }
+    Write-Host ('  Tab{0,-6} 需要 {1,7} px   {2}' -f $t2, $h, $mark)
+}

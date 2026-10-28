@@ -754,7 +754,7 @@ $xaml = @"
              四个界面的长宽一样). The CPU/GPU cards are stacked instead of side by side -
              two cards cannot both fit across a portrait window. -->
         <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="490">
-        <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+        <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
           <StackPanel>
           <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,0,0,8" Padding="18,14,18,12">
             <StackPanel>
@@ -888,16 +888,6 @@ $xaml = @"
           </Grid>
         </Border>
 
-        <!-- 存储 -->
-        <Border Background="#FF1B1E25" CornerRadius="12" Padding="18,11,18,12">
-          <StackPanel>
-            <Grid>
-              <TextBlock Text="存储" Foreground="#FF7C8598" FontSize="11"/>
-              <TextBlock x:Name="PhysDiskText" HorizontalAlignment="Right" Foreground="#FF5A6273" FontSize="11"/>
-            </Grid>
-$(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
-          </StackPanel>
-        </Border>
 
         <!-- 屏幕亮度：从杂项页搬到这里（用户要求）—— 调亮度是"看屏幕时随手就做"的事，
              放在监控页比放在杂项页顺路。 -->
@@ -934,7 +924,7 @@ $(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
       <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="490" Visibility="Collapsed">
         <StackPanel>
           <!-- ============ 性能与散热 ============ -->
-          <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 一键场景放最上面：这是本页唯一"点一下就全改"的东西，比下面任何单点控
                  制都更常按，而且它能一眼说清"现在是什么状态"。 -->
@@ -996,6 +986,19 @@ $(New-PillXaml 'Gpu' $script:GpuPills)
             </Grid>
 
 
+            <!-- 场景说明：三档各自到底改了什么。原来只在 SceneHint 里一句话带过，
+                 用户点完不知道"安静"和"省电"差在哪。数据直接来自 $script:ScenePills，
+                 改场景定义时这里自动跟着变，不会出现两处描述打架。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="场景做什么" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,6"/>
+                $(foreach ($sp in $script:ScenePills) {
+                    $kbTxt = if ($sp.Kb -eq 'off') { '键盘灯关' } else { '键盘灯 {0},{1},{2}' -f $sp.R,$sp.G,$sp.B }
+                    $line = '· {0}：电源={1} 风扇={2} {3} 亮度={4}%' -f $sp.Label, $sp.Power, $sp.Fan, $kbTxt, $sp.Bright
+                    '<TextBlock Text="' + $line + '" Foreground="#FF8A93A6" FontSize="10.5" FontFamily="Consolas" Margin="0,0,0,3"/>'
+                  })
+              </StackPanel>
+            </Border>
             <!-- 当前生效：四样东西的**读回值**。原来这行信息在每页顶部的常驻条里，和「概览」重复，
                  所以搬到这里——点的按钮和真正生效的值放在同一屏，才看得出"到底生效了没有"。 -->
             <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
@@ -1033,7 +1036,7 @@ $(New-PillXaml 'Gpu' $script:GpuPills)
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 键盘灯 ============ -->
-          <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <Grid Margin="0,0,0,10">
               <Grid.ColumnDefinitions>
@@ -1134,7 +1137,7 @@ $(New-PillXaml 'Spd' $script:LedSpeedPills 56)
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 杂项 ============ -->
-          <ScrollViewer x:Name="TabMisc" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabMisc" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 屏幕亮度已经搬到状态页（用户要求），这里不再重复 -->
 
@@ -1162,17 +1165,28 @@ $(New-SwitchRowXaml 'Nl' '数字键盘' $script:OnOffPills '系统 NumLock')
             </Border>
                         <!-- 硬件身份：以前这四行挤在系统页里，用户反馈"系统页挤在一起"。
                  机型/序列号/BIOS/系统本来就是"设备"，放这里才对。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,10">
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,8,14,8" Margin="0,0,0,4">
               <StackPanel x:Name="DevInfo">
 $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label })
               </StackPanel>
             </Border>
+        <!-- 存储 -->
+        <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,8,14,8" Margin="0,0,0,4">
+          <StackPanel>
+            <Grid>
+              <TextBlock Text="存储" Foreground="#FF7C8598" FontSize="11"/>
+              <TextBlock x:Name="PhysDiskText" HorizontalAlignment="Right" Foreground="#FF5A6273" FontSize="11"/>
+            </Grid>
+$(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
+          </StackPanel>
+        </Border>
+
 <TextBlock x:Name="MiscHint" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap"
                        Text="摄像头切换只有原厂 cc30wk.exe 这一条路（已确认），本面板不提供。所有开关显示的都是读回值，不是你刚才点的那个。"/>
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 散热 ============ -->
-          <ScrollViewer x:Name="TabCool" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabCool" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <Grid Margin="0,0,0,4">
               <Grid.ColumnDefinitions>
@@ -1225,13 +1239,13 @@ $(New-StepperXaml 'Ct3D' '转速')
             <TextBlock x:Name="CustHint" Text="" Foreground="#FF5A6273" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <!-- 当前读数：给上面那条风扇曲线一个对照。三个数都是 EC 读回（采样器每秒读），
                  不是本面板自己记的写入值——所以曲线到底生效没有，看这里最直接。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,10">
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,8,14,8" Margin="0,0,0,4">
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Grid.Column="1" Text="温度" Foreground="#FF5A6273" FontSize="10.5"/>
                 <TextBlock Grid.Row="0" Grid.Column="2" Text="转速" Foreground="#FF5A6273" FontSize="10.5"/>
@@ -1243,7 +1257,10 @@ $(New-StepperXaml 'Ct3D' '转速')
                 <TextBlock Grid.Row="2" Grid.Column="0" Text="GPU" Foreground="#FF6B7385" FontSize="11.5" VerticalAlignment="Center" Margin="0,5,0,0"/>
                 <TextBlock Grid.Row="2" Grid.Column="1" x:Name="CoolGpuTemp" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
                 <TextBlock Grid.Row="2" Grid.Column="2" x:Name="CoolGpuRpm" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="3" x:Name="CoolGpuDuty" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="3" x:Name="CoolGpuDuty" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>                <TextBlock Grid.Row="3" Grid.Column="0" Text="功耗" Foreground="#FF6B7385" FontSize="11.5" VerticalAlignment="Center" Margin="0,5,0,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" x:Name="CoolCpuPower" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="2" x:Name="CoolGpuPower" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
+                <TextBlock Grid.Row="3" Grid.Column="3" Text="CPU / GPU 封装" Foreground="#FF5A6273" FontSize="10.5" Margin="0,5,0,0"/>
               </Grid>
             </Border>
 
@@ -1252,7 +1269,7 @@ $(New-StepperXaml 'Ct3D' '转速')
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 电池 ============ -->
-          <ScrollViewer x:Name="TabBatt" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabBatt" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 电池状态：让充电限制的效果就在旁边看得见（系统给的电量/供电状态），
                  和下面那行的 EC 阈值是同一件事的两头。 -->
@@ -1352,7 +1369,7 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
 
 
           <!-- ============ 系统 ============ -->
-          <ScrollViewer x:Name="TabSys" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabSys" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 管的是程序自己：开机自启 / 托盘 / 更新检查。全在设置文件里，不碰 EC。 -->
 $(New-SwitchRowXaml 'Auto' '开机自启' $script:AutostartPills '登录后自动启动')
@@ -1384,6 +1401,16 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
               </StackPanel>
             </Border>
 
+            <!-- 操作提示：这几条原来只写在 README 里，装完不看文档的人根本不知道
+                 × 只是收托盘、真退出在托盘右键。放在关于页成本最低。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="操作提示" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
+                           Text="· 托盘图标双击 = 打开面板，右键 = 菜单（电源/风扇/键盘灯都在那）&#10;· 右上 – 和 × 都是收进托盘，不是退出；真退出用 Alt+F4 或托盘右键&#10;· 换机器被误判机型时：ClevoHelper.exe --force-write 可临时关闭写入守卫"/>
+              </StackPanel>
+            </Border>
+
             <TextBlock x:Name="AboutGuardWarn" Foreground="#FFE38A6F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Visibility="Collapsed"
                        Text="--"/>
@@ -1394,7 +1421,7 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 关于 ============ -->
-          <ScrollViewer x:Name="TabAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+          <ScrollViewer x:Name="TabAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,12,14,12" Margin="0,0,0,12">
               <Grid>
@@ -1416,24 +1443,6 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
               </Grid>
             </Border>
 
-            <!-- 操作提示：这几条原来只写在 README 里，装完不看文档的人根本不知道
-                 × 只是收托盘、真退出在托盘右键。放在关于页成本最低。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,10">
-              <StackPanel>
-                <TextBlock Text="操作提示" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
-                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
-                           Text="· 托盘图标双击 = 打开面板；右键 = 菜单（电源模式/风扇/键盘灯都在这里）&#10;· 面板右上 – 和 × 都是收进托盘，不是退出&#10;· 真退出：托盘右键 → 退出，或面板上按 Alt+F4&#10;· 换机器误判机型时：ClevoHelper.exe --force-write 可临时关闭写入守卫"/>
-              </StackPanel>
-            </Border>
-
-            <!-- 本机适配：把"凭什么敢在这台机器上写 EC"说清楚，出事时第一眼要看的也是这几条。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,12">
-              <StackPanel>
-                <TextBlock Text="本机适配" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
-                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
-                           Text="· 机型判定看序列号里的 X370SN，不看型号名（微调后型号显示为 X17 Pro Max）&#10;· 通道：InsydeDCHU.dll → AcpiBridge.sys → ACPI _DSM（UUID 93f224e4-…-db71bdc0afad）&#10;· 判定不通过时只拦写入，温度/风扇等只读监控照常工作&#10;· 键盘灯走独立 HID 通道（ITE 829x），不经过上面那条 ACPI 通道"/>
-              </StackPanel>
-            </Border>
             <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Text="功能：状态监控 · 电源模式 · 风扇曲线（可自定义节点） · 显卡模式（重启生效） · 键盘灯（静态/波/呼吸/循环 + 色盘取色） · 电池充电上限 · 亮度/触控板/Win 键/FnLock/数字键盘 · 托盘菜单 · 开机自启 · – / × 都是收进托盘（真退出：托盘右键 → 退出，或 Alt+F4）"/>
             <TextBlock x:Name="AboutNote" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
@@ -1494,7 +1503,7 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'LedColorLabel', 'CustHint', 'Ct2RowLabel', 'Ct3RowLabel',
     'CpuTempUnit', 'GpuTempUnit', 'Ct2TMinus', 'Ct2TVal', 'Ct2TUnit', 'Ct2TPlus', 'Ct2DMinus', 'Ct2DVal', 'Ct2DUnit', 'Ct2DPlus',
     'Ct3TMinus', 'Ct3TVal', 'Ct3TUnit', 'Ct3TPlus', 'Ct3DMinus', 'Ct3DVal', 'Ct3DUnit', 'Ct3DPlus',
-    'CoolCpuTemp', 'CoolCpuRpm', 'CoolCpuDuty', 'CoolGpuTemp', 'CoolGpuRpm', 'CoolGpuDuty')
+    'CoolCpuTemp', 'CoolCpuRpm', 'CoolCpuDuty', 'CoolCpuPower', 'CoolGpuPower', 'CoolGpuTemp', 'CoolGpuRpm', 'CoolGpuDuty')
 for ($i = 0; $i -lt $script:MaxVolumes; $i++) {
     $names += "Vol${i}Row"; $names += "Vol${i}Name"; $names += "Vol${i}Bar"
     $names += "Vol${i}Size"; $names += "Vol${i}Type"

@@ -8,6 +8,11 @@ $log = Join-Path $env:TEMP 'clevo-func-probe.log'
 $script:LogPath = $log
 $script:Sync = [hashtable]::Synchronized(@{ Pending = $null; Status = '' })
 
+function S([string]$name, [string]$why) {
+    Write-Host ('SKIP  {0,-24} {1}' -f $name, $why)
+    $script:skip++
+}
+
 function T([string]$name, [scriptblock]$sb, [string]$expect) {
     try {
         $v = & $sb
@@ -35,7 +40,7 @@ Write-Host ('-' * 70)
 T 'Test-DchuHasDataEx' { Test-DchuHasDataEx }
 T 'Get-AppSetting.PowerMode' { (Get-AppSetting -Id 'PowerMode').Int }
 T 'Get-AppSetting.FanMode' { (Get-AppSetting -Id 'FanMode').Int }
-T 'Get-AppSetting.GpuMode' { ([regex]::Match((Get-DchuSummary | Out-String),'GpuMode\s*=\s*(\S+)').Groups[1].Value) }
+T 'Get-WmiPackage.13' { $b = (Get-WmiPackage 13).Bytes; if ($b.Length -ne 256) { throw ('block13 长度 ' + $b.Length) }; 'bytes=256' }
 T 'Get-ClevoTelemetry' {
     $t = Get-ClevoTelemetry
     'cpu={0}°C gpu={1}°C cpuRpm={2} gpuRpm={3}' -f $t.CpuTemp, $t.GpuTemp, $t.CpuFanRpm, $t.GpuFanRpm
@@ -47,7 +52,14 @@ T 'Get-KeyboardSetting' { $k = Get-KeyboardSetting; 'fn={0} win={1} swap={2}' -f
 T 'Get-ClevoFanCurve' { $c = Get-ClevoFanCurve; 'nodes={0}' -f ($c.Nodes.Count) }
 T 'Get-FanRuntimeCurve' { $c = Get-FanRuntimeCurve; 'nodes={0}' -f ($c.Count) }
 T 'Get-LedModeFromAppSettings' { Get-LedModeFromAppSettings }
-T 'Read-LedFeature' { $c = Get-LedCollection; if (-not $c) { throw '没枚举到 HID 集合' }; $r = Read-LedFeature -Collection $c -ReportId 0xCC; 'cols={0} rc={1}' -f $c.Count, $r.Rc }
+T 'Read-LedFeature' {
+  $cols = @(Get-LedCollection)
+  if ($cols.Count -eq 0) { throw '没枚举到 HID 集合' }
+  $c = $cols | Where-Object { $_.HwId -like '*col02*' } | Select-Object -First 1
+  if (-not $c) { $c = $cols[0] }
+  $r = Read-LedFeature -Collection $c -ReportId 0xCC
+  'cols={0} len={1}' -f $cols.Count, $r.Length
+}
 
 # ---- 2. 系统只读 ----
 T 'Get-BatteryState' { $b = Get-BatteryState; 'pct={0}% ac={1}' -f $b.Percent, $b.OnAc }
@@ -63,13 +75,21 @@ T 'Compare-AppVersion 1.10>1.9' { if ((Compare-AppVersion 'v1.10' 'v1.9') -le 0)
 T 'Compare-AppVersion 1.3==v1.3' { if ((Compare-AppVersion '1.3' 'v1.3') -ne 0) { throw '比较错误' } else { '相等 ✔' } }
 T 'New-SceneRequest' { $r = New-SceneRequest -Index 1 -Auto $false; 'kind={0} label={1} power={2} fan={3}' -f $r.Kind, $r.Label, $r.Power, $r.Fan }
 T 'Test-ReqSlotFree' { 'free={0}' -f (Test-ReqSlotFree) }
-T 'New-PillXaml' { $x = New-PillXaml 'ZZ1' $script:PowerPills 70; if ($x -notmatch 'x:Name="ZZ10"') { throw '没生成名字' } else { 'ok ' + $x.Length + ' 字符' } }
+T 'New-PillXaml' { $x = New-PillXaml 'ZZ1' @(@{ Label = '自动' }, @{ Label = '性能' }, @{ Label = '静音' }) 70; if ($x -notmatch 'x:Name="ZZ10"') { throw '没生成名字' } else { 'ok ' + $x.Length + ' 字符' } }
 T 'New-AboutRowXaml' { $x = New-AboutRowXaml 'ZZ2' '标签'; if ($x -notmatch 'x:Name="ZZ2"') { throw '没生成名字' } else { 'ok ' + $x.Length + ' 字符' } }
 T 'New-SwitchRowXaml' { $x = New-SwitchRowXaml 'ZZ3' '开关'; if ($x -notmatch 'ZZ3') { throw '没生成名字' } else { 'ok ' + $x.Length + ' 字符' } }
 T 'New-StepperXaml' { $x = New-StepperXaml 'ZZ4'; if ($x -notmatch 'ZZ4') { throw '没生成名字' } else { 'ok ' + $x.Length + ' 字符' } }
-T 'New-ColorWheelBitmap' { $b = New-ColorWheelBitmap; 'wheel={0}x{1}' -f $b.PixelWidth, $b.PixelHeight }
+S 'New-ColorWheelBitmap' '类型由 ClevoHelper.ps1 启动时 Add-Type 注册；专项验证用 src\diag-colorwheel.ps1'
 T 'Get-RgbIndex' { 'idx={0}' -f (Get-RgbIndex 'static') }
-T 'New-FanCurveFrame' { $f = New-FanCurveFrame -Fans (Get-FanRuntimeCurve); 'frame={0} 字节' -f $f.Length }
+T 'New-FanCurveFrame' {
+  # 注意：Get-FanRuntimeCurve 的 D1..D4 是原始 0-255，New-FanCurveFrame 要百分比（P1..P4）。
+  $pct = Get-FanRuntimeCurve | ForEach-Object { [pscustomobject]@{ T1=$_.T1; T2=$_.T2; T3=$_.T3; T4=$_.T4; D1=$_.P1; D2=$_.P2; D3=$_.P3; D4=$_.P4 } }
+  $f = New-FanCurveFrame -Fans $pct; 'frame={0} 字节' -f $f.Length
+}
+T 'New-FanCurveFrame 单位护栏' {
+  try { New-FanCurveFrame -Fans @([pscustomobject]@{ T2=60; T3=80; D2=428; D3=400 }) | Out-Null; throw '护栏没生效（应当抛错）' }
+  catch { if ($_ -like '*要百分比*') { '正确拒绝' } else { throw } }
+}
 T 'New-LedFrame' { $f = New-LedFrame -Mode 'static' -R 255 -G 70 -B 70 -Brightness 6 -Speed 5; 'cmd 0x{0:X2} len={1}' -f $f[0], $f.Length }
 T 'Test-FanCurve' { $r = Test-FanCurve -Fans (Get-FanRuntimeCurve); 'fans={0}' -f @($r).Count }
 T 'Test-ClosureScopeTrap' { $r = Test-ClosureScopeTrap; '坑={0}' -f $r.Count }

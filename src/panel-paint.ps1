@@ -801,6 +801,10 @@ function Update-Panel {
     $n.CoolGpuTemp.Text = $(if ($null -ne $s.GpuTemp) { '{0}°C' -f [int]$s.GpuTemp } else { '--' })
     $n.CoolGpuRpm.Text  = $(if ($null -ne $s.GpuFanRpm) { '{0:N0}' -f $s.GpuFanRpm } else { '--' })
     $n.CoolGpuDuty.Text = $(if ($null -ne $s.GpuFanDuty) { '{0}%' -f $s.GpuFanDuty } else { '--' })
+
+    # 功耗：采样器已经从 EC/PDH 拿到，这里只是再摆一份到散热页，方便和风扇曲线对照。
+    $n.CoolCpuPower.Text = $(if ($null -ne $s.CpuPower) { '{0:N1} W' -f [double]$s.CpuPower } else { '--' })
+    $n.CoolGpuPower.Text = $(if ($null -ne $s.GpuPower) { '{0:N1} W' -f [double]$s.GpuPower } else { '--' })
     if ($s.CurveHealth -eq 'ok') {
         # a positive offset is normal (the EC controls on a higher internal temperature than
         # the one this panel reads), so it is reported as "生效中", not as an error

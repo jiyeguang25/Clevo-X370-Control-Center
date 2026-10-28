@@ -1,4 +1,4 @@
-# fancurve.ps1 - ClevoHelper custom fan curve layer (MILESTONE 3)
+﻿# fancurve.ps1 - ClevoHelper custom fan curve layer (MILESTONE 3)
 #
 # Curve model (verified against live telemetry on this machine):
 #   each fan has 4 points  T1/D1 .. T4/D4
@@ -85,6 +85,21 @@ function New-FanCurveFrame {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Fans)
+
+    # 单位护栏：D* 是 **百分比**，而 Get-FanRuntimeCurve 返回的 D* 是 **原始 0-255**。
+    # 两个函数字段同名却不同单位，直接把运行时曲线喂进来会算出 >255 的值，
+    # [byte] 转换报 "Value was either too large or too small for an unsigned byte"，
+    # 报错完全看不出根因（2026-10-28 的 _func-probe 就是这么撞上的）。
+    # 想要百分比请用 Get-FanRuntimeCurve 的 P1..P4。
+    for ($i = 0; $i -lt @($Fans).Count; $i++) {
+        foreach ($k in 'D1', 'D2', 'D3', 'D4') {
+            $v = $Fans[$i].$k
+            if ($null -ne $v -and [int]$v -gt 100) {
+                throw ('New-FanCurveFrame 的 ' + $k + ' 要百分比（0-100），收到 ' + [int]$v + '。把 Get-FanRuntimeCurve 的结果直接传进来就会这样，请改用它的 P1..P4。')
+            }
+        }
+    }
+
     $buf = New-Object byte[] 256
     for ($f = 0; $f -lt 3; $f++) {
         $o = 0x02 + $f * 4
