@@ -174,7 +174,7 @@ $script:HostExe = $HostExe
 # 默认"开"：这是个常驻托盘的监控工具，开机自启时弹一个窗口出来是打扰。
 # 第一次双击启动也收进托盘，用户从托盘图标把它叫出来即可（托盘菜单/双击）。
 $script:SettingsPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'settings.json'
-$script:Settings = @{ StartToTray = $true; FanCurve = $null; Led = $null; Saved = $null }
+$script:Settings = @{ StartToTray = $true; FanCurve = $null; Led = $null; Saved = $null; SceneAuto = $false }
 try {
     if (Test-Path -LiteralPath $script:SettingsPath) {
         $j = Get-Content -LiteralPath $script:SettingsPath -Raw | ConvertFrom-Json
@@ -208,6 +208,11 @@ try {
             }
             if ($sv.Count) { $script:Settings.Saved = $sv }
         }
+        # 一键场景的自动切换（插电/电池时自动套用）。默认关：不打招呼就改电源模式和风扇
+        # 是很讨厌的行为，必须用户自己勾。两档映射也一起存，方便以后加界面。
+        if ($null -ne $j.SceneAuto) { $script:Settings.SceneAuto = [bool]$j.SceneAuto }
+        if ($null -ne $j.SceneOnAc) { $script:Settings.SceneOnAc = [int]$j.SceneOnAc }
+        if ($null -ne $j.SceneOnBat) { $script:Settings.SceneOnBat = [int]$j.SceneOnBat }
     }
 }
 catch { }
@@ -230,6 +235,7 @@ $script:PanelModules = @(
     'panel-fan.ps1',
     'panel-led.ps1',
     'panel-mode.ps1',
+    'panel-scene.ps1',
     'panel-about.ps1',
     'panel-paint.ps1',
     'panel-sampler.ps1',
@@ -376,6 +382,23 @@ $script:FanPills = @(
     @{ Label = '最大'; Mode = 1;  Tip = '风扇 100%' },
     @{ Label = '自定义'; Curve = $true; Tip = '用下面两个节点自己编曲线：温度 / 转速都是 5 的倍数' }
 )
+
+# ---------------------------------------------------------------- 一键场景 ----
+# 把「电源模式 + 风扇模式 + 键盘灯 + 屏幕亮度」四件事打包成一颗按钮，一次点完全部改。
+# 为什么敢做：这四条写路径都已经各自单独验证过 —— 电源/风扇走 Write-WmiMode（写完立刻回读
+# 比对）、键盘灯走 kbled 的 HID 帧、亮度走 WMI。场景**不引入任何新协议**，它只是把这四条
+# 排进同一个请求里按顺序执行，所以最坏情况是"某一项没写进去"，而不是"把机器搞坏"。
+# 为什么只有三档、且不给编辑：场景的全部价值是"一次点完"。做成可编辑就变成又一组滑杆，
+# 反而比现在更麻烦。要精细控制下面那几行本来就在。
+# 风扇 2 = EC 自己的「静音」档（sampler 里的 $names 表写明 2 = 静音），不是我们编的曲线；
+# 用 6（自定义曲线）会和"我的曲线"抢，所以刻意不用。
+$script:ScenePills = @(
+    @{ Label = '游戏'; Power = 2; Fan = 1; Kb = 'static'; R = 255; G = 70;  B = 70;  Bright = 100; Tip = '电源=性能 · 风扇=最大 · 键盘灯=静态红 · 亮度=100%' },
+    @{ Label = '安静'; Power = 0; Fan = 2; Kb = 'static'; R = 120; G = 170; B = 255; Bright = 55;  Tip = '电源=安静 · 风扇=静音 · 键盘灯=静态蓝 · 亮度=55%' },
+    @{ Label = '省电'; Power = 1; Fan = 0; Kb = 'off'; R = 0; G = 0; B = 0; Bright = 35; Tip = '电源=省电 · 风扇=自动 · 键盘灯=关 · 亮度=35%' }
+)
+$script:SceneSel = -1        # 高亮哪一档；-1 = 没有（刚启动，或套用后又被手动改过）
+$script:SceneAuto = [bool]$script:Settings.SceneAuto   # 插电/电池变化时自动套用
 
 # Graphics-mode pills. The list is NOT hard-coded: it comes from the EC's own supported-mode
 # bitmask (res[1] of the 0x15 read), which is exactly how ControlCenter30 decides which
@@ -864,6 +887,21 @@ $(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
         <StackPanel>
           <!-- ============ 性能与散热 ============ -->
           <StackPanel x:Name="TabPerf" Visibility="Collapsed">
+            <!-- 一键场景放最上面：这是本页唯一"点一下就全改"的东西，比下面任何单点控
+                 制都更常按，而且它能一眼说清"现在是什么状态"。 -->
+            <Grid Margin="0,0,0,6">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="66"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="场景" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ScenePillRow">
+$(New-PillXaml 'Scn' $script:ScenePills)
+              </StackPanel>
+            </Grid>
+            <TextBlock x:Name="SceneHint" Foreground="#FF5A6273" FontSize="11" TextWrapping="Wrap" Margin="66,0,0,8"/>
+$(New-SwitchRowXaml 'ScnA' '自动切换' $script:OnOffPills '插电/电池时自动套用')
+
             <Grid Margin="0,0,0,10">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="66"/>
@@ -1247,6 +1285,9 @@ for ($i = 0; $i -lt $script:MaxVolumes; $i++) {
     $names += "Vol${i}Size"; $names += "Vol${i}Type"
 }
 for ($i = 0; $i -lt $script:PowerPills.Count; $i++) { $names += "Pwr$i"; $names += "Pwr${i}T" }
+for ($i = 0; $i -lt $script:ScenePills.Count; $i++) { $names += "Scn$i"; $names += "Scn${i}T" }
+for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) { $names += "ScnA$i"; $names += "ScnA${i}T" }
+$names += 'SceneHint'
 for ($i = 0; $i -lt $script:FanPills.Count; $i++) { $names += "Fan$i"; $names += "Fan${i}T" }
 for ($i = 0; $i -lt $script:RgbPills.Count; $i++) { $names += "Rgb$i" }
 for ($i = 0; $i -lt $script:RgbBrightness.Count; $i++) { $names += "RgbB$i"; $names += "RgbB${i}T" }
@@ -1298,6 +1339,23 @@ $script:Sync.KbReady = $false
 $script:Sync.FanCurvePath = Join-Path $PSScriptRoot 'fancurve.ps1'
 $script:Sync.MiscPath = Join-Path $PSScriptRoot 'misc.ps1'
 $script:Sync.Hist = @()
+# 一键场景：采样器要自己判断"该套哪一档"，所以定义和判定状态都放进共享表。
+# SceneDefs 是纯数据副本（PSCustomObject），采样器只读它 —— 不把界面上的 hashtable
+# 递进去，免得两个 runspace 同时改同一个对象。
+$script:Sync.SceneDefs = @($script:ScenePills | ForEach-Object {
+        [pscustomobject]@{
+            Label = [string]$_.Label; Power = [int]$_.Power; Fan = [int]$_.Fan; Kb = [string]$_.Kb
+            R = [int]$_.R; G = [int]$_.G; B = [int]$_.B; Bright = [int]$_.Bright
+        }
+    })
+$script:Sync.SceneAuto = [bool]$script:SceneAuto
+$script:Sync.SceneOnAc = [int]$(if ($null -ne $script:Settings.SceneOnAc) { $script:Settings.SceneOnAc } else { 0 })
+$script:Sync.SceneOnBat = [int]$(if ($null -ne $script:Settings.SceneOnBat) { $script:Settings.SceneOnBat } else { 2 })
+$script:Sync.OnAcLast = $null     # 上一次看到的供电状态；null = 还没采到，这一轮只记录不切换
+$script:Sync.AcTick = 0
+$script:Sync.SceneIndex = -1
+$script:Sync.BrightWrote = $false  # 用户/场景写过亮度后就别再补记基线（见采样器里的"亮度基线补记"）
+$script:Sync.BrightTick = 0
 # the 杂项 tab's state is read on a slower cadence than the sensors (once a second, and only
 # while that tab is on screen): brightness goes through WMI and the touchpad through the
 # registry, and neither is worth a query every 250 ms
@@ -1348,9 +1406,15 @@ try {
     $script:Sync.StartState = [pscustomobject]@{
         PowerMode = $t0.PowerMode; FanMode = $t0.FanMode; FanOffset = $t0.FanOffset
         GpuMode   = $(if ($script:GpuInfo) { $script:GpuInfo.Mode } else { 0 })
+        # 亮度一起记：场景会改亮度，"恢复初始"必须能把它一起还原（见 restore 分支的注释）。
+        # 但开机这一瞬间 WMI 还没热身，第一读经常抛（日志里就是 bright=-1），所以重试几次。
+        Bright    = $(for ($bi = 0; $bi -lt 6; $bi++) {
+                try { $bv = [int](Get-ScreenBrightness).Percent; if ($bv -ge 0) { return $bv } } catch { }
+                Start-Sleep -Milliseconds 250
+            } -1)
     }
-    Write-Dbg ("panel start state: power={0} fan={1} offset={2} gpu={3}" -f `
-        $t0.PowerMode, $t0.FanMode, $t0.FanOffset, $script:Sync.StartState.GpuMode)
+    Write-Dbg ("panel start state: power={0} fan={1} offset={2} gpu={3} bright={4}" -f `
+        $t0.PowerMode, $t0.FanMode, $t0.FanOffset, $script:Sync.StartState.GpuMode, $script:Sync.StartState.Bright)
     Write-Dbg ('dchu dll: ' + $script:DchuDll)
 }
 catch { $script:Sync.StartState = $null; Write-Dbg ('start state failed: ' + $_.Exception.Message) }
@@ -1371,6 +1435,15 @@ elseif (-not $script:ModelIsX370SN) {
     $script:Sync.GuardWarn = ('⚠ 已停止写入：本机不是蓝天 Clevo X370SN（{0}）。监控照常，但电源模式/风扇/键盘灯这些写入会被拦下。' -f $script:ModelGuardWhy)
 }
 Write-Dbg ('model guard: ok={0} forced={1} why={2}' -f $script:ModelIsX370SN, $script:ModelGuardForced, $script:ModelGuardWhy)
+
+for ($i = 0; $i -lt $script:ScenePills.Count; $i++) {
+    $idx = $i
+    $n["Scn$i"].Add_MouseLeftButtonUp({ Invoke-Scene $idx }.GetNewClosure())
+}
+for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) {
+    $on = [bool]$script:OnOffPills[$i].On
+    $n["ScnA$i"].Add_MouseLeftButtonUp({ Set-SceneAuto -On $on }.GetNewClosure())
+}
 
 for ($i = 0; $i -lt $script:PowerPills.Count; $i++) {
     $mode = $script:PowerPills[$i].Id
@@ -1824,6 +1897,46 @@ $sampler = {
                         $r = Write-WmiMode 1 $req.Mode 4 5
                         $S.LastWrite = [pscustomobject]@{ Ok = $r.Ok; Msg = ('风扇模式 → {0}  写回={1}  {2}' -f $req.Mode, $r.ReadBack, $(if ($r.Ok) { '校验通过' } else { '校验不一致!' })); At = (Get-Date) }
                     }
+                    'scene' {
+                        # 场景 = 四件事按顺序做完，一次汇报。每一项都是本面板已有的、各自验证过
+                        # 的写路径，所以这里只负责"排队"和"如实汇总"：哪一项失败就说清是哪一项，
+                        # 不做"全都成功"的美化。
+                        $st = New-Object System.Collections.ArrayList
+                        $ok = $true
+                        $r1 = Write-WmiMode 25 ([int]$req.Power) 1 1
+                        [void]$st.Add(('电源={0}(写回 {1})' -f $req.Power, $r1.ReadBack))
+                        if (-not $r1.Ok) { $ok = $false }
+                        $r2 = Write-WmiMode 1 ([int]$req.Fan) 4 5
+                        [void]$st.Add(('风扇={0}(写回 {1})' -f $req.Fan, $r2.ReadBack))
+                        if (-not $r2.Ok) { $ok = $false }
+                        if ($req.Kb -and $S.KbReady) {
+                            try {
+                                if ($req.Kb -eq 'off') {
+                                    Set-LedMode -Mode 'off' -Brightness 6 -Speed 5 -Apply | Out-Null
+                                }
+                                else {
+                                    Set-LedMode -Mode ([string]$req.Kb) -R ([int]$req.R) -G ([int]$req.G) -B ([int]$req.B) `
+                                        -Brightness 6 -Speed 5 -Apply | Out-Null
+                                }
+                                [void]$st.Add(('键盘灯={0}' -f $req.Kb))
+                            }
+                            catch { [void]$st.Add('键盘灯=失败'); $ok = $false }
+                        }
+                        if ([int]$req.Bright -ge 0) {
+                            try {
+                                [void](Set-ScreenBrightness -Percent ([int]$req.Bright) -Apply -Quick)
+                                [void]$st.Add(('亮度={0}%' -f $req.Bright))
+                            }
+                            catch { [void]$st.Add('亮度=失败'); $ok = $false }
+                        }
+                        $S.SceneIndex = [int]$req.Index
+                        if ([int]$req.Bright -ge 0) { $S.BrightWrote = $true }
+                        $tag = $(if ($req.Auto) { '（插拔电源自动）' } else { '' })
+                        $S.LastWrite = [pscustomobject]@{
+                            Ok = $ok; At = (Get-Date)
+                            Msg = ('场景「{0}」{1}：{2}' -f $req.Label, $tag, ($st -join ' · '))
+                        }
+                    }
                     'restore' {
                         if ($null -eq $S.StartState) { throw 'no start state was captured' }
                         $r1 = Write-WmiMode 25 $S.StartState.PowerMode 1 1
@@ -1847,7 +1960,18 @@ $sampler = {
                                 $kb = '；键盘灯已恢复为 {0}' -f $S.LedStartMode
                             }
                         }
-                        $S.LastWrite = [pscustomobject]@{ Ok = ($r1.Ok -and $r2.Ok); Msg = ('已恢复初始：电源={0} 风扇={1}{2}{3}' -f $r1.ReadBack, $r2.ReadBack, $g, $kb); At = (Get-Date) }
+                        # 亮度也要还原。场景会改亮度，而"恢复初始"原先只管电源/风扇/灯 ——
+                        # 2026-10-28 自检实测：场景把亮度设到 55%，恢复初始之后屏幕还停在 55%，
+                        # 用户看到的"恢复初始"名不副实。这里补上（读不到就算了，不阻断其它还原）。
+                        $br = ''
+                        if ($null -ne $S.StartState.Bright -and [int]$S.StartState.Bright -ge 0) {
+                            try {
+                                [void](Set-ScreenBrightness -Percent ([int]$S.StartState.Bright) -Apply -Quick)
+                                $br = '；亮度已恢复为 {0}%' -f $S.StartState.Bright
+                            }
+                            catch { $br = '；亮度还原失败' }
+                        }
+                        $S.LastWrite = [pscustomobject]@{ Ok = ($r1.Ok -and $r2.Ok); Msg = ('已恢复初始：电源={0} 风扇={1}{2}{3}{4}' -f $r1.ReadBack, $r2.ReadBack, $g, $kb, $br); At = (Get-Date) }
                     }
                     'gpu' {
                         # byte-identical to ControlCenter30.Window1.GPUSwitch_new(byte):
@@ -1980,6 +2104,9 @@ $sampler = {
                                 $msg = '充电停止 → {0}%（开始 {1}%）｜EC 回读：{2}' -f $v.Stop, $v.Start, $r.After
                             }
                             'bright' {
+                                # 用户自己调过亮度之后，"开机时的亮度"就不再是不可能被改变的历史，
+                                # 后面别再补记基线（否则会把用户的新值当成初始值）
+                                $S.BrightWrote = $true
                                 # 拖动中的中间值只写不校验（后面还排着新值呢），松手那一发才校验。
                                 # 否则每次拖动都要等 250ms 稳定 + 一次回读，手感就是"一卡一卡"。
                                 $quick = ($null -ne $S.Pending -and $S.Pending.Sub -eq 'bright')
@@ -2115,6 +2242,64 @@ $sampler = {
                 else { $snap.LedMode = ''; $snap.LedColor = $null }
             }
             catch { $snap.LedMode = '' }
+
+            # ---- 亮度基线补记 ----
+            # 开机那一瞬间 WMI 还没热身，直接读亮度会抛（日志里就是 panel start state: bright=-1），
+            # 而"恢复初始"要靠这个值把场景改过的亮度还原回去。所以在这里每秒补读一次，
+            # 拿到就记进 StartState；用户一旦自己调过亮度（BrightWrote）就不再补记，免得把
+            # 他刚设的值当成"初始值"还原。
+            if ($null -ne $S.StartState -and [int]$S.StartState.Bright -lt 0 -and -not $S.BrightWrote) {
+                $S.BrightTick = [int]$S.BrightTick + 1
+                if ($S.BrightTick -ge 4) {
+                    $S.BrightTick = 0
+                    try {
+                        $bv = [int](Get-ScreenBrightness).Percent
+                        if ($bv -ge 0) {
+                            $S.StartState.Bright = $bv
+                            Add-Content -LiteralPath $S.LogPath -Value ('BRIGHT baseline captured late: {0}%' -f $bv) -ErrorAction SilentlyContinue
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            # ---- 一键场景的自动切换：只盯"插拔电源"这一个事件 ----
+            # 读数用 Win32_Battery（复用 Get-BatteryState），但**不能每轮都查**：那是一次
+            # WMI 查询，250ms 一次会把采样线程拖慢（本项目测过 WMI 读是采样里最贵的一档）。
+            # 供电状态变化是以秒计的事，所以攒够 8 轮（约 2 秒）查一次就够。
+            # 打开开关后的第一轮只记基线（OnAcLast 为 null），不动任何东西 —— 见 Set-SceneAuto。
+            if ($S.SceneAuto) {
+                $S.AcTick = [int]$S.AcTick + 1
+                if ($S.AcTick -ge 8) {
+                    $S.AcTick = 0
+                    try {
+                        $bs = Get-BatteryState
+                        if ($bs.Supported) {
+                            $onAc = [bool]$bs.OnAc
+                            if ($null -eq $S.OnAcLast) {
+                                $S.OnAcLast = $onAc
+                                Add-Content -LiteralPath $S.LogPath -Value ('SCENE auto baseline: onAc={0}' -f $onAc) -ErrorAction SilentlyContinue
+                            }
+                            elseif ($S.OnAcLast -ne $onAc) {
+                                $S.OnAcLast = $onAc
+                                $pick = [int]$(if ($onAc) { $S.SceneOnAc } else { $S.SceneOnBat })
+                                if ($null -eq $S.Pending -and $pick -ge 0 -and $pick -lt $S.SceneDefs.Count) {
+                                    $d = $S.SceneDefs[$pick]
+                                    # 槽空才发：槽里已有的那条是用户刚点的，不能顶掉
+                                    $S.Pending = [pscustomobject]@{
+                                        Kind = 'scene'; Index = $pick; Label = [string]$d.Label
+                                        Power = [int]$d.Power; Fan = [int]$d.Fan; Kb = [string]$d.Kb
+                                        R = [int]$d.R; G = [int]$d.G; B = [int]$d.B; Bright = [int]$d.Bright
+                                        Auto = $true; Startup = $false; At = (Get-Date)
+                                    }
+                                    Add-Content -LiteralPath $S.LogPath -Value ('SCENE auto queued: onAc={0} → {1}' -f $onAc, $d.Label) -ErrorAction SilentlyContinue
+                                }
+                            }
+                        }
+                    }
+                    catch { Add-Content -LiteralPath $S.LogPath -Value ('SCENE ac probe failed: ' + $_.Exception.Message) -ErrorAction SilentlyContinue }
+                }
+            }
 
             # ---- 杂项 tab: read only while it is on screen, roughly once a second ----
             # The gate is ELAPSED TIME, not an iteration count. It used to be `$iters % 4`,
@@ -2553,6 +2738,7 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
     # sampler write -> read-back -> $Sync.LastWrite -> paint. Uses Quiet then restores,
     # so it is fully reversible, and closes itself.
     $script:SelfTestStep = 0
+    $script:SelfTestSceneClicked = $false
     $st = New-Object System.Windows.Threading.DispatcherTimer
     $st.Interval = [TimeSpan]::FromSeconds(1)
     $st.Add_Tick({
@@ -2614,7 +2800,46 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                 Write-Dbg ('SELFTEST power result: ok={0} msg={1}' -f $lw.Ok, $lw.Msg)
             }
             10 { Write-Dbg 'SELFTEST: simulating click on [恢复初始]'; Request-Write -Mode 0 -Kind 'restore' }
+            13 {
+                # 一键场景：走"点按钮"那条真路（Invoke-Scene 造一条 scene 请求塞进槽），采样器在
+                # 同一个请求里依次写 电源→风扇→键盘灯→亮度。选「安静」（电源=0 风扇=2 灯=静态蓝
+                # 亮度=55%），四个量都不同于默认值，写错一个就露馅。
+                # 挑第 13 步是因为第 10 步的 restore 要跑两三秒，槽还占着时点场景会被
+                # Invoke-Scene 直接挡回来（它不会顶掉正在执行的请求）—— 这里先把槽的状态记下来。
+                Write-Dbg ('SELFTEST scene: 点击前槽空闲={0}' -f (Test-ReqSlotFree))
+                if (Test-ReqSlotFree) {
+                    Write-Dbg 'SELFTEST: simulating click on scene [安静]'
+                    Invoke-Scene -Index 1
+                    $script:SelfTestSceneClicked = $true
+                }
+                else { Write-Dbg 'SELFTEST scene: 槽被 restore 占着，这一步跳过（下一步会有 FAIL 提示）' }
+            }
             15 {
+                $lw = $script:Sync.LastWrite
+                Write-Dbg ('SELFTEST restore result: ok={0} msg={1}' -f $lw.Ok, $lw.Msg)
+            }
+            16 {
+                if (-not $script:SelfTestSceneClicked) {
+                    Write-Dbg 'SELFTEST scene: FAIL —— 没点成（槽一直不空闲），这一步没验到任何东西'
+                }
+                else {
+                    $lw = $script:Sync.LastWrite
+                    Write-Dbg ('SELFTEST scene result: ok={0} msg={1}' -f $lw.Ok, $lw.Msg)
+                    # 光有汇报不算证据：再独立读一次硬件，看电源/风扇是不是真变成了那一档。
+                    # 键盘灯和亮度没有可靠的软件读回，只把期望值写进日志，靠眼睛确认。
+                    $s3 = $script:Sync.Snapshot
+                    $d3 = $script:ScenePills[1]
+                    if ($s3) {
+                        Write-Dbg ('SELFTEST scene verify: 电源 期望={0} 实际={1} {2}｜风扇 期望={3} 实际={4} {5}' -f `
+                            $d3.Power, $s3.PowerMode, $(if ([int]$s3.PowerMode -eq [int]$d3.Power) { 'ok' } else { 'FAIL' }), `
+                            $d3.Fan, $s3.FanMode, $(if ([int]$s3.FanMode -eq [int]$d3.Fan) { 'ok' } else { 'FAIL' }))
+                        Write-Dbg ('SELFTEST scene verify: 键盘灯 期望模式={0} 色=({1},{2},{3}) 亮度期望={4}%｜EC 镜像当前模式={5}' -f `
+                            $d3.Kb, $d3.R, $d3.G, $d3.B, $d3.Bright, $s3.LedMode)
+                    }
+                    else { Write-Dbg 'SELFTEST scene verify: 没有采样快照，无法独立核对' }
+                }
+            }
+            17 {
                 $lw = $script:Sync.LastWrite
                 Write-Dbg ('SELFTEST restore result: ok={0} msg={1}' -f $lw.Ok, $lw.Msg)
             }
@@ -2975,7 +3200,20 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                 Write-Dbg ('SELFTEST update: 实网 kind={0} ok={1} 远端={2} 本机=v{3} url={4} msg={5}' -f `
                     $grel.Kind, $grel.Ok, $grel.Tag, $script:AppVersion, $grel.Url, $grel.Message)
             }
-            109 { Write-Dbg 'SELFTEST: done, closing'; $script:Win.Close() }
+            106 {
+                # 收尾：把机器交还给用户。自检里改过电源/风扇/灯/亮度，其中场景那一步是四个一起改
+                # 的，不还原就留在「安静」上——自检跑完人走了，机器还静音着，这不行。
+                Write-Dbg 'SELFTEST: 收尾，恢复打开面板时捕获的初始状态'
+                Request-Write -Mode 0 -Kind 'restore'
+            }
+            109 {
+                # 第 106 步排的"收尾还原"要等它真的做完再关窗：请求是排队交给采样器的，
+                # 立刻 Close() 会把还没执行的还原丢掉 —— 那样日志上写了"恢复初始"，
+                # 机器却停在自检最后改的那一档（2026-10-28 实测亮度就留在 55%）。
+                for ($w = 0; $w -lt 25 -and -not (Test-ReqSlotFree); $w++) { Start-Sleep -Milliseconds 200 }
+                Write-Dbg 'SELFTEST: done, closing'
+                $script:Win.Close()
+            }
         }
     })
     $st.Start()

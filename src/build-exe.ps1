@@ -36,6 +36,7 @@ $scripts = @(
     'panel-fan.ps1',      # 风扇曲线
     'panel-led.ps1',      # 键盘灯
     'panel-mode.ps1',     # 模式与杂项：显卡模式二次确认、杂项写读、开机自启
+    'panel-scene.ps1',    # 一键场景：电源/风扇/键盘灯/亮度打包成一次点击 + 插拔电源自动切
     'panel-about.ps1',    # 关于页：版本比较 + GitHub Release 查询
     'panel-paint.ps1',    # 重画：把采样快照刷到界面（Update-Panel）
     'panel-sampler.ps1',  # 后台采样 runspace

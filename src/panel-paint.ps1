@@ -118,6 +118,39 @@ function Update-Panel {
         $n.PhysDiskText.Text += (($pd | ForEach-Object { '{0} {1}' -f $_.Model, (Format-GB ($_.GB * 1GB)) }) -join '   ·   ')
     }
 
+    # ---- 一键场景 ----
+    # 高亮**从硬件状态反推**，不记"我最后点了哪一档"：场景是四个量的组合，EC 里没有
+    # "场景"这个概念，所以唯一的诚实判据是"电源、风扇、键盘灯这三样是否同时等于那一档"。
+    # 用户随后手动改了其中一个（比如把电源拨到性能），下一次重画就该熄灭 —— 界面不能
+    # 一边显示「安静」一边跑着性能。
+    # 亮度不参与比对：读一次亮度要走 WMI，而这一页平时不读它（见 Sync.WantBright），
+    # 为了给一个高亮去加一次每 400ms 的 WMI 查询不划算。亮度值仍写在 hint 里。
+    $sceneHit = -1
+    if ($null -ne $s.PowerMode -and $null -ne $s.FanMode) {
+        for ($i = 0; $i -lt $script:ScenePills.Count; $i++) {
+            $d = $script:ScenePills[$i]
+            $kbOk = ([string]$d.Kb -eq '') -or ([string]$d.Kb -eq [string]$s.LedMode)
+            if ([int]$s.PowerMode -eq [int]$d.Power -and [int]$s.FanMode -eq [int]$d.Fan -and $kbOk) { $sceneHit = $i; break }
+        }
+    }
+    for ($i = 0; $i -lt $script:ScenePills.Count; $i++) {
+        Set-Pill $n["Scn$i"] $n["Scn${i}T"] ($i -eq $sceneHit) '#FFB98BFF'
+    }
+    $autoOn = [bool]$script:Settings.SceneAuto
+    for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) {
+        Set-Pill $n["ScnA$i"] $n["ScnA${i}T"] ([bool]$script:OnOffPills[$i].On -eq $autoOn) '#FFB98BFF'
+    }
+    if ($sceneHit -ge 0) {
+        $n.SceneHint.Text = ('当前「{0}」：{1}' -f $script:ScenePills[$sceneHit].Label, $script:ScenePills[$sceneHit].Tip)
+    }
+    else {
+        $n.SceneHint.Text = '点一下同时改电源、风扇、键盘灯、亮度（自定义曲线不受影响）'
+    }
+    if ($autoOn) {
+        $n.SceneHint.Text += ('   ·   插电→{0}，电池→{1}' -f `
+                $script:ScenePills[[int]$script:Sync.SceneOnAc].Label, $script:ScenePills[[int]$script:Sync.SceneOnBat].Label)
+    }
+
     $powerActive = ''
     for ($i = 0; $i -lt $script:PowerPills.Count; $i++) {
         $on = ($null -ne $s.PowerMode -and $s.PowerMode -eq $script:PowerPills[$i].Id)
