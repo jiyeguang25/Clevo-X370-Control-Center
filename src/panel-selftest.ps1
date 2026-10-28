@@ -1,4 +1,4 @@
-# panel-selftest.ps1 —— 自检：接线核查、真点、作用域静态检查
+﻿# panel-selftest.ps1 —— 自检：接线核查、真点、作用域静态检查
 #
 # 由 ClevoHelper.ps1 用 dot-source 载入：所有 panel-*.ps1 共享**同一个脚本作用域**，
 # 不是 PowerShell 模块（没有 Import-Module、没有独立作用域）。所以：
@@ -43,7 +43,7 @@ function Get-ExpectedWiring {
     & $one 'ColorWheel' 'Up'
     & $many 'Auto' $script:AutostartPills.Count 'Up'
     & $many 'Tray' 2 'Up'
-    foreach ($t in 'State', 'Perf', 'Cool', 'Kb', 'Batt', 'Misc', 'Sys', 'About') { & $one "TabBtn$t" 'Up' }
+    foreach ($t in 'State', 'Perf', 'Kb', 'Batt', 'Misc', 'Sys', 'About') { & $one "TabBtn$t" 'Up' }
     & $many 'Fan' $script:FanPills.Count 'Up'
     foreach ($f in 'Ct2T', 'Ct2D', 'Ct3T', 'Ct3D') { & $one "${f}Minus" 'Up'; & $one "${f}Plus" 'Up' }
     & $one 'MinBtn' 'Down'

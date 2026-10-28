@@ -1,4 +1,4 @@
-# misc.ps1 - the switches on the 杂项 tab that are NOT DCHU byte channels.
+﻿# misc.ps1 - the switches on the 杂项 tab that are NOT DCHU byte channels.
 #
 # Three of them, each with a real read-back:
 #   屏幕亮度  WMI (WmiMonitorBrightnessMethods.WmiSetBrightness / WmiMonitorBrightness)
@@ -183,6 +183,13 @@ function Get-BatteryHealth {
         if ($sd -and [int]$sd.DesignedCapacity -gt 0) {
             $r.Supported = $true
             $r.Design = [int]$sd.DesignedCapacity
+            # 本机 BatteryCycleCount 恒为 0（电池不实现该 SMART 字段），所以界面上这一格
+            # 显示制造日期——它是真值，也能用来判断电池年龄。
+            try { if ($sd.ManufactureDate) { $r.Made = [string]$sd.ManufactureDate } } catch { }
+                    # 静态身份：运行期不变，电池页用来回答"这块电池是谁"。
+                    try { if ($sd.Manufacturer) { $r.Mfr = [string]$sd.Manufacturer } } catch { }
+                    try { if ($sd.DeviceName) { $r.Dev = [string]$sd.DeviceName } } catch { }
+                    try { if ($sd.Chemistry) { $r.Chem = [string]$sd.Chemistry.Trim() } } catch { }
             try {
                 $fc = Get-WmiObject -Namespace root\wmi -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1
                 if ($fc -and [int]$fc.FullChargedCapacity -gt 0) {
@@ -199,6 +206,11 @@ function Get-BatteryHealth {
                 if ($st) {
                     if ([int]$st.RemainingCapacity -gt 0) { $r.Now = [int]$st.RemainingCapacity }
                     if ([int]$st.Voltage -gt 0) { $r.VoltMv = [int]$st.Voltage }
+                    # 充/放电功率（mW）与电池温度（十分之一开尔文）。两者都可能为 0/不报，
+                    # 交给界面显示「—」，不在这里猜。
+                    if ($null -ne $st.ChargeRate) { $r.ChargeMw = [int]$st.ChargeRate }
+                    if ($null -ne $st.DischargeRate) { $r.DischargeMw = [int]$st.DischargeRate }
+                    if ($null -ne $st.Temperature) { $r.TempK10 = [int]$st.Temperature }
                 }
             } catch { }
         }

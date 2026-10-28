@@ -1,4 +1,4 @@
-# diag-layout.ps1 - audit the panel's real pixel layout without opening a window.
+﻿# diag-layout.ps1 - audit the panel's real pixel layout without opening a window.
 #
 # Renders nothing: it builds the same off-screen window as diag-render-ui.ps1 and then reads
 # each named element's position inside the window with TransformToAncestor. Eyeballing a
@@ -6,7 +6,7 @@
 #
 # Usage: powershell -STA -NoProfile -ExecutionPolicy Bypass -File diag-layout.ps1 [-Tab perf|kb|state|misc]
 [CmdletBinding()]
-param([ValidateSet('state', 'perf', 'cool', 'kb', 'batt', 'misc', 'sys', 'about')][string]$Tab = 'perf')
+param([ValidateSet('state', 'perf', 'kb', 'batt', 'misc', 'sys', 'about')][string]$Tab = 'perf')
 $ErrorActionPreference = 'Stop'
 
 $src = Join-Path $PSScriptRoot 'ClevoHelper.ps1'

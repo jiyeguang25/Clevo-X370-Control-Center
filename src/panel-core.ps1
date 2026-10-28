@@ -1,4 +1,4 @@
-# panel-core.ps1 —— 基础工具：存取配置、写日志、请求槽、XAML 小控件构造器
+﻿# panel-core.ps1 —— 基础工具：存取配置、写日志、请求槽、XAML 小控件构造器
 #
 # 由 ClevoHelper.ps1 用 dot-source 载入：所有 panel-*.ps1 共享**同一个脚本作用域**，
 # 不是 PowerShell 模块（没有 Import-Module、没有独立作用域）。所以：
@@ -108,7 +108,7 @@ function New-SwitchRowXaml([string]$prefix, [string]$label, $pills, [string]$hin
     $sb.ToString()
 }
 
-function New-StepperXaml([string]$prefix, [string]$caption) {
+function New-StepperXaml([string]$prefix, [string]$caption, [string]$unit = '°C') {
     # − value unit + stepper.
     # The number sits right-aligned in a FIXED 34px box and the unit left-aligned in its own
     # 22px box (monospace). Centre-aligning "60 °C" / "100 °C" in one box made the digits and
@@ -121,7 +121,7 @@ function New-StepperXaml([string]$prefix, [string]$caption) {
                 </Border>
                 <TextBlock x:Name="${prefix}Val" Text="--" Foreground="#FFD7DCE6" FontFamily="Consolas" FontSize="13"
                            Width="34" TextAlignment="Right" VerticalAlignment="Center"/>
-                <TextBlock x:Name="${prefix}Unit" Text="$([char]0x00B0)C" Foreground="#FF6B7385" FontFamily="Consolas" FontSize="11"
+                <TextBlock x:Name="${prefix}Unit" Text="$unit" Foreground="#FF6B7385" FontFamily="Consolas" FontSize="11"
                            Width="22" TextAlignment="Left" VerticalAlignment="Center" Margin="3,0,3,0"/>
                 <Border x:Name="${prefix}Plus" Background="#FF262A33" CornerRadius="11" MinWidth="26" Padding="0,3" Cursor="Hand">
                   <TextBlock Text="+" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
@@ -139,8 +139,11 @@ function New-AboutRowXaml([string]$name, [string]$label) {
                 <ColumnDefinition Width="*"/>
               </Grid.ColumnDefinitions>
               <TextBlock Grid.Column="0" Text="$label" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
+              <!-- 值可能比列宽长（"Microsoft Windows 11 Home China 10.0.26300" 就是），
+                   截断之后鼠标停一下能看全——用绑定跟自己的 Text 走，省得每个赋值处再管一次。 -->
               <TextBlock Grid.Column="1" x:Name="$name" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas"
-                         VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                         VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                         ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             </Grid>
 "@
 }

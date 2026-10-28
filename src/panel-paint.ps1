@@ -438,7 +438,6 @@ function Update-Panel {
     $n.TabState.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
     $n.StatePanel.Visibility = $(if ($tab -eq 'state') { 'Visible' } else { 'Collapsed' })
     $n.TabPerf.Visibility = $(if ($tab -eq 'perf') { 'Visible' } else { 'Collapsed' })
-    $n.TabCool.Visibility = $(if ($tab -eq 'cool') { 'Visible' } else { 'Collapsed' })
     $n.TabKb.Visibility = $(if ($tab -eq 'kb') { 'Visible' } else { 'Collapsed' })
     $n.TabBatt.Visibility = $(if ($tab -eq 'batt') { 'Visible' } else { 'Collapsed' })
     $n.TabMisc.Visibility = $(if ($tab -eq 'misc') { 'Visible' } else { 'Collapsed' })
@@ -447,7 +446,6 @@ function Update-Panel {
     $n.ControlPanel.Visibility = $(if ($tab -eq 'state') { 'Collapsed' } else { 'Visible' })
     Set-Pill $n.TabBtnState $n.TabBtnStateT ($tab -eq 'state') '#FFB98BFF'
     Set-Pill $n.TabBtnPerf $n.TabBtnPerfT ($tab -eq 'perf') '#FFB98BFF'
-    Set-Pill $n.TabBtnCool $n.TabBtnCoolT ($tab -eq 'cool') '#FFB98BFF'
     Set-Pill $n.TabBtnKb $n.TabBtnKbT ($tab -eq 'kb') '#FFB98BFF'
     Set-Pill $n.TabBtnBatt $n.TabBtnBattT ($tab -eq 'batt') '#FFB98BFF'
     Set-Pill $n.TabBtnMisc $n.TabBtnMiscT ($tab -eq 'misc') '#FFB98BFF'
@@ -478,13 +476,6 @@ function Update-Panel {
     $n.TitleTemps.Text = 'CPU {0}° · GPU {1}°' -f `
         $(if ($null -ne $s.CpuTemp) { [int]$s.CpuTemp } else { '--' }),
         $(if ($null -ne $s.GpuTemp) { [int]$s.GpuTemp } else { '--' })
-
-    # ---- 性能页「当前生效」：四个读回值 ----
-    # 无门禁：只有四个文本框赋值，代价可忽略；门禁反而会让切页那一帧看到上一页的旧值。
-    $n.NowPower.Text = $(if ($powerActive) { $powerActive } else { [string]$s.PowerModeName })
-    $n.NowFan.Text = $(if ($fanActive) { $fanActive } else { [string]$s.FanModeName })
-    $n.NowGpu.Text = [string]$s.GpuModeName
-    $n.NowKb.Text = $(if ($kbActive) { $kbActive } else { '—' })
 
     if ($tab -eq 'kb') {
         $sel = $script:LedSel
@@ -536,7 +527,10 @@ function Update-Panel {
 
         # ---- 方向行：只有「波」用得到（帧里 d0 = 0xA1/0x71 + 方向）----
         $dirMode = ($sel.Mode -eq 'wave')
-        $n.LedDirRow.Visibility = $(if ($dirMode) { 'Visible' } else { 'Collapsed' })
+        # 方向行改常显：用户反馈"有些东西没有显示出来"。不隐藏、只在模式用不到它时变暗，
+        # 这样用户知道这项存在；能用到时（波动/循环）才是亮的、可点的。
+        $n.LedDirRow.Opacity = $(if ($dirMode) { 1.0 } else { 0.45 })
+        $n.LedDirHint.Text = $(if ($dirMode) { '色带滚过方向' } else { '（当前模式不用方向）' })
         if ($dirMode) {
             for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) {
                 Set-Pill $n["Dir$i"] $n["Dir${i}T"] ([int]$script:LedDirPills[$i].Idx -eq [int]$sel.Dir) '#FFB98BFF'
@@ -714,13 +708,35 @@ function Update-Panel {
             $n.BhDesign.Text = ('{0:N1} Wh' -f ($bh.Design / 1000.0))
             $n.BhFull.Text = $(if ($bh.Full) { '{0:N1} Wh' -f ($bh.Full / 1000.0) } else { '—' })
             $n.BhHealth.Text = $(if ($bh.Health) { '{0:N1}%' -f $bh.Health } else { '—' })
-            $n.BhCycles.Text = $(if ($bh.Cycles) { [string]$bh.Cycles } else { '—' })
+                        # ManufactureDate 是 WMI 原始串（20240612000000.000000+000），这里只取年月。
+            $madeRaw = [string]$bh.Made
+            $madeDisp = $(if ($madeRaw -match '^(\d{4})-(\d{2})') { '{0}-{1}' -f $Matches[1], $Matches[2] }
+                          elseif ($madeRaw -match '^(\d{4})(\d{2})') { '{0}-{1}' -f $Matches[1], $Matches[2] }
+                          else { '—' })
+            $n.BhCycles.Text = $madeDisp
+            $n.BhMfr.Text  = $(if ($bh.Mfr)  { [string]$bh.Mfr }  else { '—' })
+            $n.BhDev.Text  = $(if ($bh.Dev)  { [string]$bh.Dev }  else { '—' })
+            $n.BhChem.Text = $(if ($bh.Chem) { [string]$bh.Chem } else { '—' })
+            # 预计可用：Win32_Battery.EstimatedRunTime 单位分钟；接电源时是 71582788（无效值）→ 显示"接电源"。
+            $runMin = 0
+            try {
+                $wb = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($wb -and $wb.EstimatedRunTime -and [int]$wb.EstimatedRunTime -lt 100000) { $runMin = [int]$wb.EstimatedRunTime }
+            } catch { }
+            $n.BhLeft.Text = $(if ($runMin -gt 0) { '{0} 小时 {1} 分' -f [int]($runMin / 60), ($runMin % 60) } else { '接电源' })
             $n.BhNow.Text = $(if ($bh.Now) { '{0:N1} Wh' -f ($bh.Now / 1000.0) } else { '—' })
             $n.BhVolt.Text = $(if ($bh.VoltMv) { '{0:N2} V' -f ($bh.VoltMv / 1000.0) } else { '—' })
+            # 充放功率：接电源时看充电功率，电池供电时看放电功率；两者都是 0 就显示 0.0 W（真的静置）。
+            $rateMw = $(if ($null -ne $bh.ChargeMw -and [int]$bh.ChargeMw -gt 0) { [int]$bh.ChargeMw }
+                        elseif ($null -ne $bh.DischargeMw -and [int]$bh.DischargeMw -gt 0) { -[int]$bh.DischargeMw }
+                        else { 0 })
+            $n.BhRate.Text = $(if ($null -ne $bh.ChargeMw -or $null -ne $bh.DischargeMw) { '{0:N1} W' -f ($rateMw / 1000.0) } else { '—' })
+            # 温度字段是十分之一开尔文（2982 = 25.05 ℃）；0 表示不报。
+            $n.BhTemp.Text = $(if ($bh.TempK10 -and [int]$bh.TempK10 -gt 1000) { '{0:N1} ℃' -f ([int]$bh.TempK10 / 10.0 - 273.15) } else { '—' })
 
         }
         else {
-            foreach ($k in 'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt') { $n[$k].Text = '—' }
+            foreach ($k in 'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt', 'BhRate', 'BhTemp', 'BhMfr', 'BhDev', 'BhChem', 'BhLeft') { $n[$k].Text = '—' }
         }
         # ---- 保养建议（刻意放在健康度判断之外：读不到健康度也要给建议）----
         # 每条都由当前读数或设置推出来，没有写死的文案；电池状态变量是 $bt（= $mi.Battery）。
@@ -816,18 +832,6 @@ function Update-Panel {
         elseif (-not $script:BrightDragging) { $n.BrightVal.Text = '--%' }
     }
 
-    $n.ModeText.Text = '风扇偏移 {0,-2}  ·  实际采样 {1} Hz  ·  写入串行化' -f $s.FanOffset, $(if ($script:Sync.RateHz) { $script:Sync.RateHz } else { '--' })
-    # 散热页的当前读数（EC 回读）。温度/转速/占空比都可能暂时为 $null，统一显示 --。
-    $n.CoolCpuTemp.Text = $(if ($null -ne $s.CpuTemp) { '{0}°C' -f [int]$s.CpuTemp } else { '--' })
-    $n.CoolCpuRpm.Text  = $(if ($null -ne $s.CpuFanRpm) { '{0:N0}' -f $s.CpuFanRpm } else { '--' })
-    $n.CoolCpuDuty.Text = $(if ($null -ne $s.CpuFanDuty) { '{0}%' -f $s.CpuFanDuty } else { '--' })
-    $n.CoolGpuTemp.Text = $(if ($null -ne $s.GpuTemp) { '{0}°C' -f [int]$s.GpuTemp } else { '--' })
-    $n.CoolGpuRpm.Text  = $(if ($null -ne $s.GpuFanRpm) { '{0:N0}' -f $s.GpuFanRpm } else { '--' })
-    $n.CoolGpuDuty.Text = $(if ($null -ne $s.GpuFanDuty) { '{0}%' -f $s.GpuFanDuty } else { '--' })
-
-    # 功耗：采样器已经从 EC/PDH 拿到，这里只是再摆一份到散热页，方便和风扇曲线对照。
-    $n.CoolCpuPower.Text = $(if ($null -ne $s.CpuWatts) { '{0:N0} W' -f [double]$s.CpuWatts } else { '--' })
-    $n.CoolGpuPower.Text = $(if ($null -ne $s.GpuWatts) { '{0:N0} W' -f [double]$s.GpuWatts } else { '--' })
     if ($s.CurveHealth -eq 'ok') {
         # a positive offset is normal (the EC controls on a higher internal temperature than
         # the one this panel reads), so it is reported as "生效中", not as an error
@@ -871,7 +875,6 @@ function Update-Panel {
         $lines += $(if ($s.FanMode -ne 6) { '（当前是自动/最大，EC 用自己的表）' }
                     elseif ($matchCustom) { '（与上面两个自定义节点一致）' }
                     else { '（与当前自定义值不一致：是别处写的表）' })
-        $n.CurveText.Text = ($lines -join "`n")
     }
 
     $lw = $script:Sync.LastWrite

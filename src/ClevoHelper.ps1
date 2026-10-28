@@ -718,32 +718,27 @@ $xaml = @"
              is gone: it duplicated 概览 on every page. The one number that is worth seeing
              from anywhere - CPU/GPU temperature - moved into the title bar instead. -->
         <Grid Margin="0,0,0,8">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+          <Grid.ColumnDefinitions>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>            <ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
           <Border Grid.Column="0" x:Name="TabBtnState" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnStateT" Text="概览" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
           <Border Grid.Column="1" x:Name="TabBtnPerf" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
-            <TextBlock x:Name="TabBtnPerfT" Text="性能" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
+            <TextBlock x:Name="TabBtnPerfT" Text="性能·散热" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
-          <Border Grid.Column="2" x:Name="TabBtnCool" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
-            <TextBlock x:Name="TabBtnCoolT" Text="散热" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
-          </Border>
-          <Border Grid.Column="3" x:Name="TabBtnKb" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
+          <Border Grid.Column="2" x:Name="TabBtnKb" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnKbT" Text="灯效" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
-          <Border Grid.Column="4" x:Name="TabBtnBatt" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
+          <Border Grid.Column="3" x:Name="TabBtnBatt" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnBattT" Text="电池" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
-          <Border Grid.Column="5" x:Name="TabBtnMisc" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
+          <Border Grid.Column="4" x:Name="TabBtnMisc" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnMiscT" Text="设备" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
-          <Border Grid.Column="6" x:Name="TabBtnSys" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
+          <Border Grid.Column="5" x:Name="TabBtnSys" Background="#FF262A33" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnSysT" Text="系统" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
-          <Border Grid.Column="7" x:Name="TabBtnAbout" Background="#FF262A33" CornerRadius="12" Padding="0,5" Cursor="Hand">
+          <Border Grid.Column="6" x:Name="TabBtnAbout" Background="#FF262A33" CornerRadius="12" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnAboutT" Text="关于" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
         </Grid>
@@ -753,7 +748,7 @@ $xaml = @"
              fixed height, so switching tabs never changes the window size (user request:
              四个界面的长宽一样). The CPU/GPU cards are stacked instead of side by side -
              two cards cannot both fit across a portrait window. -->
-        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="470">
+        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="480">
         <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
           <StackPanel>
           <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,0,0,8" Padding="18,14,18,12">
@@ -889,6 +884,16 @@ $xaml = @"
         </Border>
 
 
+        <!-- 存储：从设备页搬来（概览太空、设备太挤；CPU/GPU/内存/存储本来就是一组） -->
+        <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,8,0,0" Padding="18,9,18,9">
+          <StackPanel>
+            <Grid>
+              <TextBlock Text="存储" Foreground="#FF7C8598" FontSize="11"/>
+              <TextBlock x:Name="PhysDiskText" HorizontalAlignment="Right" Foreground="#FF5A6273" FontSize="11"/>
+            </Grid>
+$(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
+          </StackPanel>
+        </Border>
         <!-- 屏幕亮度：从杂项页搬到这里（用户要求）—— 调亮度是"看屏幕时随手就做"的事，
              放在监控页比放在杂项页顺路。 -->
         <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,8,0,0" Padding="18,9,18,9">
@@ -921,9 +926,9 @@ $xaml = @"
              win=468x920  StatePanel=470 ControlPanel=470     ← 修复前
              win=468x662  StatePanel=470 ControlPanel=0(c)    ← 重画之后
            把默认值和"默认标签页"对齐，首帧就等于最终帧，跳变彻底消失。 -->
-      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="470" Visibility="Collapsed">
+      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="480" Visibility="Collapsed">
         <StackPanel>
-          <!-- ============ 性能与散热 ============ -->
+          <!-- ============ 性能与散热（原两页合并） ============ -->
           <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 一键场景放最上面：这是本页唯一"点一下就全改"的东西，比下面任何单点控
@@ -986,57 +991,62 @@ $(New-PillXaml 'Gpu' $script:GpuPills)
             </Grid>
 
 
-            <!-- 场景说明：三档各自到底改了什么。原来只在 SceneHint 里一句话带过，
-                 用户点完不知道"安静"和"省电"差在哪。数据直接来自 $script:ScenePills，
-                 改场景定义时这里自动跟着变，不会出现两处描述打架。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
-              <StackPanel>
-                <TextBlock Text="场景做什么" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,6"/>
-                $(foreach ($sp in $script:ScenePills) {
-                    $kbTxt = if ($sp.Kb -eq 'off') { '键盘灯关' } else { '键盘灯 {0},{1},{2}' -f $sp.R,$sp.G,$sp.B }
-                    $pn = ($script:PowerPills | Where-Object { $_.Id -eq $sp.Power } | Select-Object -First 1)
-                    $fn = ($script:FanPills | Where-Object { $_.Mode -eq $sp.Fan } | Select-Object -First 1)
-                    $pLabel = if ($pn) { $pn.Label } else { '电源 ' + $sp.Power }
-                    $fLabel = if ($fn) { $fn.Label } else { '风扇 ' + $sp.Fan }
-                    $line = '· {0}：{1} · 风扇{2} · {3} · 亮度 {4}%' -f $sp.Label, $pLabel, $fLabel, $kbTxt, $sp.Bright
-                    '<TextBlock Text="' + $line + '" Foreground="#FF8A93A6" FontSize="10.5" FontFamily="Consolas" Margin="0,0,0,3"/>'
-                  })
+            <Grid Margin="0,0,0,4">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="66"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="风扇" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="FanPillRow">
+$(New-PillXaml 'Fan' $script:FanPills)
               </StackPanel>
-            </Border>
-            <!-- 当前生效：四样东西的**读回值**。原来这行信息在每页顶部的常驻条里，和「概览」重复，
-                 所以搬到这里——点的按钮和真正生效的值放在同一屏，才看得出"到底生效了没有"。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
-                  <TextBlock Text="电源 " Foreground="#FF5A6273" FontSize="11"/>
-                  <TextBlock x:Name="NowPower" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
-                </StackPanel>
-                <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                  <TextBlock Text="风扇 " Foreground="#FF5A6273" FontSize="11"/>
-                  <TextBlock x:Name="NowFan" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
-                </StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,6,0,0">
-                  <TextBlock Text="显卡 " Foreground="#FF5A6273" FontSize="11"/>
-                  <TextBlock x:Name="NowGpu" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
-                </StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,6,0,0">
-                  <TextBlock Text="键盘灯 " Foreground="#FF5A6273" FontSize="11"/>
-                  <TextBlock x:Name="NowKb" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
-                </StackPanel>
-              </Grid>
-            </Border>
+            </Grid>
+            <!-- 曲线健康度 on its OWN line. In the 800px window it sat in a third column of
+                 the fan row; at 468px the pill column is 326px wide and the Auto column
+                 started UNDER the third pill (measured: text at x=281, 自定义 pill 259..329),
+                 so the two overlapped. Measured with diag-layout.ps1, not guessed. -->
+            <TextBlock x:Name="CurveHealth" Text="" Foreground="#FF6B7385" FontSize="11" Margin="66,0,0,8"/>
+
+            <Grid Margin="0,0,0,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="66"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="Ct2RowLabel" Grid.Column="0" Text="节点 2" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal">
+$(New-StepperXaml 'Ct2T' '温度')
+              </StackPanel>
+              <StackPanel Grid.Column="2" Orientation="Horizontal">
+$(New-StepperXaml 'Ct2D' '转速' '%')
+              </StackPanel>
+            </Grid>
+
+            <Grid Margin="0,0,0,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="66"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="Ct3RowLabel" Grid.Column="0" Text="节点 3" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal">
+$(New-StepperXaml 'Ct3T' '温度')
+              </StackPanel>
+              <StackPanel Grid.Column="2" Orientation="Horizontal">
+$(New-StepperXaml 'Ct3D' '转速' '%')
+              </StackPanel>
+            </Grid>
+
+            <TextBlock x:Name="CustHint" Text="" Foreground="#FF5A6273" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <!-- 恢复初始 moved here from the title row: it is this tab's rollback button
                  (power / fan / curve / staged GPU / keyboard lighting), so it belongs next
                  to the things it undoes instead of competing with the tab buttons. -->
-            <Border x:Name="RevertBtn" Background="#FF262A33" CornerRadius="13" Padding="0,6" Margin="0,12,0,0" Cursor="Hand">
+            <Border x:Name="RevertBtn" Background="#FF262A33" CornerRadius="13" Padding="0,6" Margin="0,10,0,0" Cursor="Hand">
               <TextBlock x:Name="RevertBtnT" Text="恢复初始（电源·风扇·曲线·显卡·键盘灯）" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
-            </Border>
+            </Border>            <TextBlock x:Name="RevertHint" Foreground="#FF6B7385" FontSize="10.5" TextWrapping="Wrap" Margin="2,8,0,0"
+                       Text="恢复初始：把电源、风扇、曲线、显卡、键盘灯改回本次开机时的值（亮度不动），约 2 秒。"/>
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 键盘灯 ============ -->
@@ -1075,7 +1085,7 @@ $(New-SwatchXaml 'Rgb' $script:RgbPills)
             <!-- 方向：只有「波」用得到（帧里 d0 = 0xA1/0x71 + 方向），所以这一行只在选中
                  波的时候出现。提示放在按钮右边（短），不再单独占一行 —— 竖屏下这一页的
                  高度要用在色盘上（单独一行会把提示挤到色盘上面去）。 -->
-            <Grid x:Name="LedDirRow" Margin="0,0,0,9" Visibility="Collapsed">
+            <Grid x:Name="LedDirRow" Margin="0,0,0,9">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="66"/>
                 <ColumnDefinition Width="*"/>
@@ -1136,7 +1146,19 @@ $(New-PillXaml 'Spd' $script:LedSpeedPills 56)
               </StackPanel>
             </StackPanel>
 
-            <TextBlock x:Name="KbHint" Foreground="#FF6B7385" FontSize="11"
+            <!-- 灯效页原来只有五行药丸 + 色盘，下面空一大块。这张卡是静态说明：
+                 讲清键盘灯为什么能控、为什么没有软件回读，省得用户以为没生效。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,9,14,9" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="这条路" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,5"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3"
+                           Text="· 键盘灯独立于 EC：走 HID 设备 VID_048D / PID_8910（ITE 829x），不经过 DCHU"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3"
+                           Text="· 7 字节命令：CC 01 6C R G B 00 —— 改色只发这一帧，不动其它设置"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap"
+                           Text="· 没有软件回读：灯亮没亮只能看键盘，面板只用 AppSettings 副本核对"/>
+              </StackPanel>
+            </Border>            <TextBlock x:Name="KbHint" Foreground="#FF6B7385" FontSize="11"
                        Text="$script:KbHintBase" TextWrapping="Wrap"/>
             </StackPanel>           </ScrollViewer>
 
@@ -1174,103 +1196,12 @@ $(New-SwitchRowXaml 'Nl' '数字键盘' $script:OnOffPills '系统 NumLock')
 $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label })
               </StackPanel>
             </Border>
-        <!-- 存储 -->
-        <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,8,14,8" Margin="0,0,0,4">
-          <StackPanel>
-            <Grid>
-              <TextBlock Text="存储" Foreground="#FF7C8598" FontSize="11"/>
-              <TextBlock x:Name="PhysDiskText" HorizontalAlignment="Right" Foreground="#FF5A6273" FontSize="11"/>
-            </Grid>
-$(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
-          </StackPanel>
-        </Border>
 
 <TextBlock x:Name="MiscHint" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap"
-                       Text="摄像头切换只有原厂 cc30wk.exe 这一条路（已确认），本面板不提供。所有开关显示的都是读回值，不是你刚才点的那个。"/>
+                       Text="摄像头切换只有原厂 cc30wk.exe 一条路，本面板不提供。开关显示的都是读回值。"/>
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 散热 ============ -->
-          <ScrollViewer x:Name="TabCool" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
-            <StackPanel>
-            <Grid Margin="0,0,0,4">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="风扇" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="FanPillRow">
-$(New-PillXaml 'Fan' $script:FanPills)
-              </StackPanel>
-            </Grid>
-            <!-- 曲线健康度 on its OWN line. In the 800px window it sat in a third column of
-                 the fan row; at 468px the pill column is 326px wide and the Auto column
-                 started UNDER the third pill (measured: text at x=281, 自定义 pill 259..329),
-                 so the two overlapped. Measured with diag-layout.ps1, not guessed. -->
-            <TextBlock x:Name="CurveHealth" Text="" Foreground="#FF6B7385" FontSize="11" Margin="66,0,0,8"/>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock x:Name="Ct2RowLabel" Grid.Column="0" Text="节点 2" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal">
-$(New-StepperXaml 'Ct2T' '温度')
-              </StackPanel>
-              <StackPanel Grid.Column="2" Orientation="Horizontal">
-$(New-StepperXaml 'Ct2D' '转速')
-              </StackPanel>
-            </Grid>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock x:Name="Ct3RowLabel" Grid.Column="0" Text="节点 3" Foreground="#FF6B7385" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal">
-$(New-StepperXaml 'Ct3T' '温度')
-              </StackPanel>
-              <StackPanel Grid.Column="2" Orientation="Horizontal">
-$(New-StepperXaml 'Ct3D' '转速')
-              </StackPanel>
-            </Grid>
-
-            <TextBlock x:Name="CustHint" Text="" Foreground="#FF5A6273" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"/>
-            <!-- 当前读数：给上面那条风扇曲线一个对照。三个数都是 EC 读回（采样器每秒读），
-                 不是本面板自己记的写入值——所以曲线到底生效没有，看这里最直接。 -->
-            <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,8,14,8" Margin="0,0,0,4">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Grid.Column="1" Text="温度" Foreground="#FF5A6273" FontSize="10.5"/>
-                <TextBlock Grid.Row="0" Grid.Column="2" Text="转速" Foreground="#FF5A6273" FontSize="10.5"/>
-                <TextBlock Grid.Row="0" Grid.Column="3" Text="占空比" Foreground="#FF5A6273" FontSize="10.5"/>
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="CPU" Foreground="#FF6B7385" FontSize="11.5" VerticalAlignment="Center" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="CoolCpuTemp" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="1" Grid.Column="2" x:Name="CoolCpuRpm" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="1" Grid.Column="3" x:Name="CoolCpuDuty" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="GPU" Foreground="#FF6B7385" FontSize="11.5" VerticalAlignment="Center" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="1" x:Name="CoolGpuTemp" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="2" x:Name="CoolGpuRpm" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="2" Grid.Column="3" x:Name="CoolGpuDuty" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>                <TextBlock Grid.Row="3" Grid.Column="0" Text="功耗" Foreground="#FF6B7385" FontSize="11.5" VerticalAlignment="Center" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="3" Grid.Column="1" x:Name="CoolCpuPower" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="3" Grid.Column="2" x:Name="CoolGpuPower" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" FontFamily="Consolas" Margin="0,5,0,0"/>
-                <TextBlock Grid.Row="3" Grid.Column="3" Text="CPU / GPU 封装" Foreground="#FF5A6273" FontSize="10.5" Margin="0,5,0,0"/>
-              </Grid>
-            </Border>
-
-            <TextBlock x:Name="ModeText" Text="风扇 --   ·   电源 --" Foreground="#FF8A93A6" FontSize="11.5" FontFamily="Consolas"/>
-            <TextBlock x:Name="CurveText" Text="曲线 --" Foreground="#FF6B7385" FontSize="11.5" FontFamily="Consolas" Margin="0,6,0,0" LineHeight="16"/>
-            </StackPanel>           </ScrollViewer>
 
           <!-- ============ 电池 ============ -->
           <ScrollViewer x:Name="TabBatt" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
@@ -1294,21 +1225,21 @@ $(New-StepperXaml 'Ct3D' '转速')
             </Border>
 
             <!-- 电池健康：只读，启动/首次打开本页时读一次（root\wmi BatteryStaticData 有点慢，不进采样循环）。
-                 设计容量与满充容量之比就是损耗；循环次数很多机型不报，报不出来就显示「—」。 -->
+                 设计容量与满充容量之比就是损耗；循环次数本机不报（CycleCount 恒 0），这一格改显示制造日期。 -->
             <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,12">
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
                   <TextBlock Text="健康度 " Foreground="#FF5A6273" FontSize="11"/>
                   <TextBlock x:Name="BhHealth" Text="--" Foreground="#FF6FE38A" FontSize="11.5"/>
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                  <TextBlock Text="循环 " Foreground="#FF5A6273" FontSize="11"/>
+                  <TextBlock Text="制造 " Foreground="#FF5A6273" FontSize="11"/>
                   <TextBlock x:Name="BhCycles" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
                 </StackPanel>
                 <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,6,0,0">
@@ -1326,6 +1257,13 @@ $(New-StepperXaml 'Ct3D' '转速')
                 <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,6,0,0">
                   <TextBlock Text="电压 " Foreground="#FF5A6273" FontSize="11"/>
                   <TextBlock x:Name="BhVolt" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
+                </StackPanel>                <StackPanel Grid.Row="3" Grid.Column="0" Orientation="Horizontal" Margin="0,6,0,0">
+                  <TextBlock Text="充放功率 " Foreground="#FF5A6273" FontSize="11"/>
+                  <TextBlock x:Name="BhRate" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
+                </StackPanel>
+                <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,6,0,0">
+                  <TextBlock Text="电池温度 " Foreground="#FF5A6273" FontSize="11"/>
+                  <TextBlock x:Name="BhTemp" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
                 </StackPanel>
               </Grid>
             </Border>
@@ -1376,6 +1314,38 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
               <StackPanel>
                 <TextBlock Text="保养建议" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,5"/>
                 <TextBlock x:Name="BattAdvice" Text="--" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="17"/>
+              </StackPanel>
+            </Border>
+            <!-- 电池信息：来自 root\wmi 的 BatteryStaticData（启动时读一次，运行期不变）。
+                 循环次数本机不报（读回 0），所以不列这一项。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,6,0,0">
+              <StackPanel>
+                <TextBlock Text="电池信息" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,5"/>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,2,0,0">
+                    <TextBlock Text="厂商 " Foreground="#FF5A6273" FontSize="11"/>
+                    <TextBlock x:Name="BhMfr" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Margin="0,2,0,0">
+                    <TextBlock Text="型号 " Foreground="#FF5A6273" FontSize="11"/>
+                    <TextBlock x:Name="BhDev" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,2,0,0">
+                    <TextBlock Text="化学 " Foreground="#FF5A6273" FontSize="11"/>
+                    <TextBlock x:Name="BhChem" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
+                  </StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,2,0,0">
+                    <TextBlock Text="预计可用 " Foreground="#FF5A6273" FontSize="11"/>
+                    <TextBlock x:Name="BhLeft" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
+                  </StackPanel>
+                </Grid>
               </StackPanel>
             </Border>
             </StackPanel>           </ScrollViewer>
@@ -1456,7 +1426,18 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
               </Grid>
             </Border>
 
-            <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+            <!-- 本机适配：为什么能在这台机器上跑、换机器会怎样。纯静态文字，不占采样。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="13,9,14,9" Margin="0,10,0,0">
+              <StackPanel>
+                <TextBlock Text="本机适配" Foreground="#FF5A6273" FontSize="10.5" Margin="0,0,0,5"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3"
+                           Text="· 机型判据看序列号里的 X370SN —— 型号名（X17 Pro Max）里没有 X370"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,0,0,3"
+                           Text="· 通道 InsydeDCHU.dll → AcpiBridge.sys → ACPI _DSM（UUID 93f224e4…afad）"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap"
+                           Text="· 机型守卫只拦写入；只读监控在任何机器上都能用"/>
+              </StackPanel>
+            </Border>            <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Text="功能：状态监控 · 电源模式 · 风扇曲线（可自定义节点） · 显卡模式（重启生效） · 键盘灯（静态/波/呼吸/循环 + 色盘取色） · 电池充电上限 · 亮度/触控板/Win 键/FnLock/数字键盘 · 托盘菜单 · 开机自启 · – / × 都是收进托盘（真退出：托盘右键 → 退出，或 Alt+F4）"/>
             <TextBlock x:Name="AboutNote" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
                        Text="原理：温度/风扇/模式/键盘灯都走原厂那条 InsydeDCHU → AcpiBridge 通道（ACPI\CLV0001），和原厂控制中心用的是同一条路；每次写入都会从硬件读回校验，状态栏绿色=一致、橙色=不一致。显卡模式是开机前值，只能重启后生效，所以本面板只暂存、不替你重启。"/>
@@ -1493,16 +1474,15 @@ $script:Win.Add_SourceInitialized({
 $n = @{}
 $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTemp', 'CpuRpm', 'CpuDutyText', 'CpuBar', 'CpuFreq', 'CpuPower', 'CpuUtil',
     'GpuTemp', 'GpuRpm', 'GpuDutyText', 'GpuBar', 'GpuFreq', 'GpuPower', 'GpuUtil',
-    'ModeText', 'CurveText', 'StatusText', 'RevertBtn', 'RevertBtnT', 'CurveHealth', 'MinBtn',
+    'StatusText', 'RevertBtn', 'RevertBtnT', 'CurveHealth', 'MinBtn',
     'GpuHeader', 'MemBar', 'MemText', 'MemPct', 'PhysDiskText',
     'GpuRow', 'GpuPillRow', 'GpuNow', 'GpuConfirm', 'GpuConfirmText', 'GpuOk', 'GpuCancel', 'GpuRebootBtn',
     'AutoRow', 'TitleTemps',
-    'NowPower', 'NowFan', 'NowGpu', 'NowKb',
-    'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt', 'DevKb', 'DevTp',
+    'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt', 'BhRate', 'BhTemp', 'BhMfr', 'BhDev', 'BhChem', 'BhLeft', 'DevKb', 'DevTp', 'RevertHint',
     'TabBtnState', 'TabBtnStateT', 'TabState', 'ControlPanel', 'StatePanel',
     'TabBtnPerf', 'TabBtnPerfT', 'TabBtnKb', 'TabBtnKbT', 'TabBtnMisc', 'TabBtnMiscT',
-  'TabBtnCool', 'TabBtnCoolT', 'TabBtnBatt', 'TabBtnBattT',
-  'TabPerf', 'TabKb', 'TabMisc', 'TabCool', 'TabBatt', 'KbHint', 'MiscHint',
+    'TabBtnBatt', 'TabBtnBattT',
+    'TabPerf', 'TabKb', 'TabMisc', 'TabBatt', 'KbHint', 'MiscHint',
     'TabBtnSys', 'TabBtnSysT', 'TabSys',
     'TabBtnAbout', 'TabBtnAboutT', 'TabAbout', 'AboutAvatarBrush', 'AboutName', 'AboutTitle', 'AboutMail', 'AboutTagline',
     'AboutInfo', 'AboutNote', 'AboutFeatures', 'AboutDisclaimer', 'AboutChannelWarn', 'AboutGuardWarn',
@@ -1515,8 +1495,7 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'BrightSlider', 'BrightVal',
     'LedColorLabel', 'CustHint', 'Ct2RowLabel', 'Ct3RowLabel',
     'CpuTempUnit', 'GpuTempUnit', 'Ct2TMinus', 'Ct2TVal', 'Ct2TUnit', 'Ct2TPlus', 'Ct2DMinus', 'Ct2DVal', 'Ct2DUnit', 'Ct2DPlus',
-    'Ct3TMinus', 'Ct3TVal', 'Ct3TUnit', 'Ct3TPlus', 'Ct3DMinus', 'Ct3DVal', 'Ct3DUnit', 'Ct3DPlus',
-    'CoolCpuTemp', 'CoolCpuRpm', 'CoolCpuDuty', 'CoolCpuPower', 'CoolGpuPower', 'CoolGpuTemp', 'CoolGpuRpm', 'CoolGpuDuty')
+    'Ct3TMinus', 'Ct3TVal', 'Ct3TUnit', 'Ct3TPlus', 'Ct3DMinus', 'Ct3DVal', 'Ct3DUnit', 'Ct3DPlus')
 for ($i = 0; $i -lt $script:MaxVolumes; $i++) {
     $names += "Vol${i}Row"; $names += "Vol${i}Name"; $names += "Vol${i}Bar"
     $names += "Vol${i}Size"; $names += "Vol${i}Type"
@@ -1955,7 +1934,6 @@ for ($i = 0; $i -lt $script:OnOffPills.Count; $i++) {
 
 $n.TabBtnState.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'state' })
 $n.TabBtnPerf.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'perf' })
-$n.TabBtnCool.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'cool' })
 $n.TabBtnKb.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'kb' })
 $n.TabBtnBatt.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'batt' })
 $n.TabBtnMisc.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'misc' })
@@ -2970,7 +2948,7 @@ if ($SizeProbe) {
         [void]$parts.Add(('win={0}x{1}' -f [int]$script:Win.ActualWidth, [int]$script:Win.ActualHeight))
         [void]$parts.Add(('vis={0}' -f $script:Win.IsVisible))
         [void]$parts.Add(('snap={0}' -f $(if ($script:Sync.Snapshot) { 'yes' } else { 'no' })))
-        foreach ($nm in 'StatePanel', 'ControlPanel', 'TabState', 'TabPerf', 'TabCool', 'TabKb', 'TabBatt', 'TabMisc', 'TabSys', 'TabAbout',
+        foreach ($nm in 'StatePanel', 'ControlPanel', 'TabState', 'TabPerf', 'TabKb', 'TabBatt', 'TabMisc', 'TabSys', 'TabAbout',
             'Vol0Row', 'Vol1Row', 'MemRow', 'BrightSlider', 'StatusText', 'TitleTemps') {
             $e = $script:Win.FindName($nm)
             if ($e) {
