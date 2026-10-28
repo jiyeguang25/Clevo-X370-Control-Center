@@ -601,6 +601,7 @@ function Update-Panel {
             Mode      = $(if ($portable) { '单文件 EXE（自包含）' } else { '脚本运行（开发模式）' })
             ExePath   = (& $short $exePath)
             DataDir   = (& $short (Split-Path $script:LogPath -Parent))
+            Model     = [string]$script:SysInfo.Model
             Serial    = [string]$script:SysInfo.Serial
             Bios      = [string]$script:SysInfo.Bios
             Windows   = [string]$script:SysInfo.Windows
@@ -619,11 +620,29 @@ function Update-Panel {
             if ($gw) { $n.AboutGuardWarn.Text = $gw }
         }
         foreach ($k in $vals.Keys) {
+            # 硬件身份行（机型/序列号/BIOS/系统）现在画在设备页，名字前缀是 Dev_。
             $tb = $n[('About_' + $k)]
+            if (-not $tb) { $tb = $n[('Dev_' + $k)] }
             if ($tb) {
                 $tb.Text = [string]$vals[$k]
                 $tb.ToolTip = $(if ($full.Contains($k)) { [string]$full[$k] } else { [string]$vals[$k] })
             }
+        }
+
+        # 运行记录：四个只读值，当场算完就写，不进采样通道。
+        if ($n.RunUp) {
+            $up = $(if ($script:PanelStartAt) { (Get-Date) - $script:PanelStartAt } else { [TimeSpan]::Zero })
+            $n.RunUp.Text = $(if ($up.TotalHours -ge 1) {
+                    '{0} 小时 {1} 分' -f [int]$up.TotalHours, $up.Minutes
+                } elseif ($up.TotalMinutes -ge 1) {
+                    '{0} 分 {1} 秒' -f [int]$up.TotalMinutes, $up.Seconds
+                } else { '{0} 秒' -f [int]$up.TotalSeconds })
+            $n.RunFreq.Text = '每 1 秒 · 重画每 400 毫秒'
+            $n.RunLogSize.Text = $(if (Test-Path -LiteralPath $script:LogPath) {
+                    '{0:N0} KB' -f ((Get-Item -LiteralPath $script:LogPath).Length / 1KB)
+                } else { '—' })
+            $n.RunLogPath.Text = & $short $script:LogPath
+            $n.RunLogPath.ToolTip = $script:LogPath
         }
     }
 
@@ -730,6 +749,14 @@ function Update-Panel {
         # ---- 输入设备（启动时读一次，值不会变）----
         $n.DevKb.Text = [string]$script:InputInfo.Keyboard
         $n.DevTp.Text = [string]$script:InputInfo.Touchpad
+        # 硬件身份（设备页）：这四行启动时查过一次（$script:SysInfo），这里只做格式化，
+        # 不再每次重画都去问 CIM —— 序列号和 BIOS 版本运行期不会变。
+        if ($n.Dev_Model) {
+            $n.Dev_Model.Text = [string]$script:SysInfo.Model
+            $n.Dev_Serial.Text = [string]$script:SysInfo.Serial
+            $n.Dev_Bios.Text = [string]$script:SysInfo.Bios
+            $n.Dev_Windows.Text = [string]$script:SysInfo.Windows
+        }
 
         # 启动收进托盘那两颗药丸搬到了系统页（见下面 sys 块）：它读的是设置文件，
         # 不是 EC，和这五个硬件开关不是一回事。

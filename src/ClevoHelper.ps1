@@ -252,6 +252,8 @@ foreach ($m in $script:PanelModules) { . (Join-Path $PSScriptRoot $m) }
 # 不依赖任何外部文件 —— 和那个工具一样，"程序只有一个 EXE"这个约定不破。
 # 版本号的单一来源：这里改一处，标题栏和关于页都跟着变。
 $script:AppName = 'ClevoHelper'
+# 面板起来的时刻：系统页「已运行」用它算，不另建定时器。
+$script:PanelStartAt = Get-Date
 # ⚠️ 改这里要同步两处，否则"用户报的版本号"和"关于页显示的版本号"会打架：
 #   1) README 里写的当前版本
 #   2) GitHub Release 的 tag（发布脚本用 tools\Publish-Release.ps1）
@@ -269,12 +271,18 @@ $script:UpdateRepo = 'jiyeguang25/Clevo-X370-Control-Center'
 # 关于页的信息行。**只放别处看不到的东西**（用户要求）：机型在标题栏、开机自启在杂项页、
 # 显卡在状态/性能页、内存和处理器在状态页、EC 通道在底部状态栏 —— 这些这里都不再重复，
 # 关于页只留"程序是谁、什么版本、装在哪"和两个别处确实没有的硬件号。
+# 分成两套：软件自己的几行进「系统」页，硬件身份进「设备」页。
+# 一页塞八行会挤成一片（用户反馈「系统页挤在一起」），分开放每页都正好。
 $script:AboutRows = @(
     @{ Key = 'Version';  Label = '版本' }
     @{ Key = 'Built';    Label = '构建' }
     @{ Key = 'Mode';     Label = '运行方式' }
     @{ Key = 'ExePath';  Label = '程序位置' }
     @{ Key = 'DataDir';  Label = '数据目录' }
+)
+# 硬件身份：判断"这台机器是什么"只用看这四行，归设备页。
+$script:DevRows = @(
+    @{ Key = 'Model';    Label = '机型' }
     @{ Key = 'Serial';   Label = '序列号' }
     @{ Key = 'Bios';     Label = 'BIOS' }
     @{ Key = 'Windows';  Label = '系统' }
@@ -745,8 +753,8 @@ $xaml = @"
              fixed height, so switching tabs never changes the window size (user request:
              四个界面的长宽一样). The CPU/GPU cards are stacked instead of side by side -
              two cards cannot both fit across a portrait window. -->
-        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" MinHeight="180">
-        <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+        <Border x:Name="StatePanel" Background="#FF191C22" CornerRadius="12" Padding="20,14,20,12" Height="490">
+        <ScrollViewer x:Name="TabState" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
           <StackPanel>
           <Border Background="#FF1B1E25" CornerRadius="12" Margin="0,0,0,8" Padding="18,14,18,12">
             <StackPanel>
@@ -923,10 +931,10 @@ $(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
              win=468x920  StatePanel=470 ControlPanel=470     ← 修复前
              win=468x662  StatePanel=470 ControlPanel=0(c)    ← 重画之后
            把默认值和"默认标签页"对齐，首帧就等于最终帧，跳变彻底消失。 -->
-      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" MinHeight="180" Visibility="Collapsed">
+      <Border x:Name="ControlPanel" Grid.Row="2" Background="#FF191C22" CornerRadius="12" Margin="16,0,16,0" Padding="20,14,20,12" Height="490" Visibility="Collapsed">
         <StackPanel>
           <!-- ============ 性能与散热 ============ -->
-          <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <!-- 一键场景放最上面：这是本页唯一"点一下就全改"的东西，比下面任何单点控
                  制都更常按，而且它能一眼说清"现在是什么状态"。 -->
@@ -1025,7 +1033,7 @@ $(New-PillXaml 'Gpu' $script:GpuPills)
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 键盘灯 ============ -->
-          <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <Grid Margin="0,0,0,10">
               <Grid.ColumnDefinitions>
@@ -1126,7 +1134,7 @@ $(New-PillXaml 'Spd' $script:LedSpeedPills 56)
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 杂项 ============ -->
-          <ScrollViewer x:Name="TabMisc" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabMisc" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <!-- 屏幕亮度已经搬到状态页（用户要求），这里不再重复 -->
 
@@ -1152,12 +1160,19 @@ $(New-SwitchRowXaml 'Nl' '数字键盘' $script:OnOffPills '系统 NumLock')
                 <TextBlock Grid.Row="1" Grid.Column="1" x:Name="DevTp" Text="--" Foreground="#FFD7DCE6" FontSize="11.5" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
               </Grid>
             </Border>
-            <TextBlock x:Name="MiscHint" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap"
+                        <!-- 硬件身份：以前这四行挤在系统页里，用户反馈"系统页挤在一起"。
+                 机型/序列号/BIOS/系统本来就是"设备"，放这里才对。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,10">
+              <StackPanel x:Name="DevInfo">
+$(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label })
+              </StackPanel>
+            </Border>
+<TextBlock x:Name="MiscHint" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap"
                        Text="摄像头切换只有原厂 cc30wk.exe 这一条路（已确认），本面板不提供。所有开关显示的都是读回值，不是你刚才点的那个。"/>
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 散热 ============ -->
-          <ScrollViewer x:Name="TabCool" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabCool" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <Grid Margin="0,0,0,4">
               <Grid.ColumnDefinitions>
@@ -1237,7 +1252,7 @@ $(New-StepperXaml 'Ct3D' '转速')
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 电池 ============ -->
-          <ScrollViewer x:Name="TabBatt" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabBatt" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <!-- 电池状态：让充电限制的效果就在旁边看得见（系统给的电量/供电状态），
                  和下面那行的 EC 阈值是同一件事的两头。 -->
@@ -1337,7 +1352,7 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
 
 
           <!-- ============ 系统 ============ -->
-          <ScrollViewer x:Name="TabSys" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabSys" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <!-- 管的是程序自己：开机自启 / 托盘 / 更新检查。全在设置文件里，不碰 EC。 -->
 $(New-SwitchRowXaml 'Auto' '开机自启' $script:AutostartPills '登录后自动启动')
@@ -1358,6 +1373,17 @@ $(New-SwitchRowXaml 'Tray' '收进托盘' $script:OnOffPills '不弹窗口，只
 $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.Label })
             </StackPanel>
 
+            <!-- 运行记录：这一页管的是程序自己，所以"开了多久、日志多大、写在哪"都在这。
+                 四个值全是只读、都在重画时当场算，不占采样通道。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
+              <StackPanel>
+$(New-AboutRowXaml 'RunUp' '已运行')
+$(New-AboutRowXaml 'RunFreq' '采样')
+$(New-AboutRowXaml 'RunLogSize' '日志')
+$(New-AboutRowXaml 'RunLogPath' '日志位置')
+              </StackPanel>
+            </Border>
+
             <TextBlock x:Name="AboutGuardWarn" Foreground="#FFE38A6F" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Visibility="Collapsed"
                        Text="--"/>
@@ -1368,7 +1394,7 @@ $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.La
             </StackPanel>           </ScrollViewer>
 
           <!-- ============ 关于 ============ -->
-          <ScrollViewer x:Name="TabAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0" MaxHeight="600">
+          <ScrollViewer x:Name="TabAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
             <StackPanel>
             <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,12,14,12" Margin="0,0,0,12">
               <Grid>
@@ -1390,6 +1416,24 @@ $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.La
               </Grid>
             </Border>
 
+            <!-- 操作提示：这几条原来只写在 README 里，装完不看文档的人根本不知道
+                 × 只是收托盘、真退出在托盘右键。放在关于页成本最低。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,10">
+              <StackPanel>
+                <TextBlock Text="操作提示" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
+                           Text="· 托盘图标双击 = 打开面板；右键 = 菜单（电源模式/风扇/键盘灯都在这里）&#10;· 面板右上 – 和 × 都是收进托盘，不是退出&#10;· 真退出：托盘右键 → 退出，或面板上按 Alt+F4&#10;· 换机器误判机型时：ClevoHelper.exe --force-write 可临时关闭写入守卫"/>
+              </StackPanel>
+            </Border>
+
+            <!-- 本机适配：把"凭什么敢在这台机器上写 EC"说清楚，出事时第一眼要看的也是这几条。 -->
+            <Border Background="#FF1B1E25" CornerRadius="10" Padding="14,10,14,10" Margin="0,0,0,12">
+              <StackPanel>
+                <TextBlock Text="本机适配" Foreground="#FF7C8598" FontSize="11" Margin="0,0,0,6"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
+                           Text="· 机型判定看序列号里的 X370SN，不看型号名（微调后型号显示为 X17 Pro Max）&#10;· 通道：InsydeDCHU.dll → AcpiBridge.sys → ACPI _DSM（UUID 93f224e4-…-db71bdc0afad）&#10;· 判定不通过时只拦写入，温度/风扇等只读监控照常工作&#10;· 键盘灯走独立 HID 通道（ITE 829x），不经过上面那条 ACPI 通道"/>
+              </StackPanel>
+            </Border>
             <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
                        Text="功能：状态监控 · 电源模式 · 风扇曲线（可自定义节点） · 显卡模式（重启生效） · 键盘灯（静态/波/呼吸/循环 + 色盘取色） · 电池充电上限 · 亮度/触控板/Win 键/FnLock/数字键盘 · 托盘菜单 · 开机自启 · – / × 都是收进托盘（真退出：托盘右键 → 退出，或 Alt+F4）"/>
             <TextBlock x:Name="AboutNote" Foreground="#FF6B7385" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
@@ -1427,7 +1471,7 @@ $script:Win.Add_SourceInitialized({
 $n = @{}
 $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTemp', 'CpuRpm', 'CpuDutyText', 'CpuBar', 'CpuFreq', 'CpuPower', 'CpuUtil',
     'GpuTemp', 'GpuRpm', 'GpuDutyText', 'GpuBar', 'GpuFreq', 'GpuPower', 'GpuUtil',
-    'ModeText', 'CurveText', 'StatusText', 'UpdatedText', 'RevertBtn', 'RevertBtnT', 'CurveHealth', 'MinBtn',
+    'ModeText', 'CurveText', 'StatusText', 'RevertBtn', 'RevertBtnT', 'CurveHealth', 'MinBtn',
     'GpuHeader', 'MemBar', 'MemText', 'MemPct', 'PhysDiskText',
     'GpuRow', 'GpuPillRow', 'GpuNow', 'GpuConfirm', 'GpuConfirmText', 'GpuOk', 'GpuCancel', 'GpuRebootBtn',
     'AutoRow', 'TitleTemps',
@@ -1473,6 +1517,8 @@ foreach ($pre in 'Tp', 'Wk', 'Fl', 'Ws', 'Nl', 'Tray') {
     for ($i = 0; $i -lt 2; $i++) { $names += "${pre}$i"; $names += "${pre}${i}T" }
 }
 foreach ($r in $script:AboutRows) { $names += ('About_' + $r.Key) }
+    foreach ($r in $script:DevRows) { $names += ('Dev_' + $r.Key) }
+    $names += @('RunUp', 'RunFreq', 'RunLogSize', 'RunLogPath')
 for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) { $names += "Dir$i"; $names += "Dir${i}T" }
 foreach ($k in $names) { $n[$k] = $script:Win.FindName($k) }
 
@@ -2903,7 +2949,7 @@ if ($SizeProbe) {
         [void]$parts.Add(('vis={0}' -f $script:Win.IsVisible))
         [void]$parts.Add(('snap={0}' -f $(if ($script:Sync.Snapshot) { 'yes' } else { 'no' })))
         foreach ($nm in 'StatePanel', 'ControlPanel', 'TabState', 'TabPerf', 'TabCool', 'TabKb', 'TabBatt', 'TabMisc', 'TabSys', 'TabAbout',
-            'Vol0Row', 'Vol1Row', 'MemRow', 'BrightSlider', 'StatusText', 'TitleTemps', 'UpdatedText') {
+            'Vol0Row', 'Vol1Row', 'MemRow', 'BrightSlider', 'StatusText', 'TitleTemps') {
             $e = $script:Win.FindName($nm)
             if ($e) {
                 [void]$parts.Add(('{0}={1}{2}' -f $nm, [int]$e.ActualHeight, $(if ($e.Visibility -ne 'Visible') { '(c)' } else { '' })))
