@@ -93,7 +93,7 @@ function New-SwitchRowXaml([string]$prefix, [string]$label, $pills, [string]$hin
     # row used full sentences ('系统 NumLock（原厂无 EC 通道，走系统按键）', ~240px) and the
     # text landed on top of the 关 pill (measured: hint x=191, pills 105..204).
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('            <Grid Margin="0,0,0,9">')
+    [void]$sb.AppendLine('            <Grid Margin="0,0,0,7">')
     [void]$sb.AppendLine('              <Grid.ColumnDefinitions>')
     [void]$sb.AppendLine('                <ColumnDefinition Width="66"/>')
     [void]$sb.AppendLine('                <ColumnDefinition Width="*"/>')

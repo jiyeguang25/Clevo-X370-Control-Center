@@ -666,8 +666,11 @@ function Update-Panel {
         # 推荐，下一次重画就按推荐把行收起来）。
         $chgSel = ''
         if ($null -ne $mi) {
-            $sel.Start = [int]$mi.ChargerStart
-            $sel.Stop = [int]$mi.ChargerStop
+            # 写入在飞时先显示"我刚点的那个值"，等 EC 回读回来再以硬件为准。
+            # 少了这一句，点完刻度会"跳回去再跳过来"，看起来像没点上。
+            $pendMisc = ($script:Sync.Pending -and $script:Sync.Pending.Kind -eq 'misc')
+            $sel.Start = $(if ($pendMisc) { [int]$script:MiscSel.Start } else { [int]$mi.ChargerStart })
+            $sel.Stop = $(if ($pendMisc) { [int]$script:MiscSel.Stop } else { [int]$mi.ChargerStop })
             if ($sel.CustomOpen) { $chgSel = 'custom' }
             elseif ($script:Sync.Pending -and $script:Sync.Pending.Kind -eq 'misc') { $chgSel = [string]$sel.Charger }
             elseif (-not $mi.ChargerEnabled) { $chgSel = 'max' }
@@ -678,30 +681,59 @@ function Update-Panel {
         for ($i = 0; $i -lt $script:ChargerPills.Count; $i++) {
             Set-Pill $n["Chg$i"] $n["Chg${i}T"] ($script:ChargerPills[$i].Key -eq $chgSel) '#FF57B0FF'
         }
-        if ($null -ne $mi) {
-            $n.ChargerHint.Text = $(if ($mi.ChargerEnabled) { 'EC：{0}% 起 / {1}% 停' -f $mi.ChargerStart, $mi.ChargerStop }
-                else { 'EC：不限制（充满 100%）' })
-            if ($chgSel -ne 'custom') { $n.ChargerHint.Text += '   ·   点「自定义」可改阈值' }
-        }
-        # 自定义阈值行：**常驻**，但只有自定义档可选中。不可选时整体变暗 + 不接受点击
-        # （和风扇节点行同一套做法：非自定义模式下就是"看得见、点不动"）。
+        # ---- 充电窗口：一根轨道 + 上排（开始）/ 下排（停止）刻度 ----
+        # 位置即角色：上排只会设"开始"、下排只会设"停止"，所以不存在"这一点该改哪一端"的判定；
+        # 非法的那一颗（开始 >= 停止）照旧置灰不可点 —— 与原来 11 颗药丸同一套规则。
         $editable = ($chgSel -eq 'custom')
         $n.ChgStartLabel.Opacity = $(if ($editable) { 1.0 } else { 0.35 })
-        $n.ChgStopLabel.Opacity = $(if ($editable) { 1.0 } else { 0.35 })
-        for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
-            $v = [int]$script:ChargerStartPills[$i].Id
-            # 可点 = 在自定义档 且 组合合法（起始 < 停止）
-            $clickable = $editable -and (($null -eq $mi) -or ($v -lt [int]$sel.Stop))
-            Set-Pill $n["ChgS$i"] $n["ChgS${i}T"] ($v -eq [int]$sel.Start) '#FF57B0FF'
-            $n["ChgS$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
-            $n["ChgS$i"].IsHitTestVisible = $clickable
-        }
-        for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
-            $v = [int]$script:ChargerStopPills[$i].Id
-            $clickable = $editable -and (($null -eq $mi) -or ($v -gt [int]$sel.Start))
-            Set-Pill $n["ChgE$i"] $n["ChgE${i}T"] ($v -eq [int]$sel.Stop) '#FF57B0FF'
-            $n["ChgE$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
-            $n["ChgE$i"].IsHitTestVisible = $clickable
+        $n.ChgStopLabel.Text = $(if ($null -ne $mi) {
+                $(if ($mi.ChargerEnabled) { '{0}% → {1}%' -f [int]$sel.Start, [int]$sel.Stop } else { '不限制（充满 100%）' })
+            } else { '--' })
+        $n.ChgStopLabel.Opacity = $(if ($editable) { 1.0 } else { 0.6 })
+
+        $hasTicks = (($script:ChargerStartPills.Count + $script:ChargerStopPills.Count) -gt 0)
+        # 空态：EC 没报可选窗口时整条轨道收起来，不留一条点不动的空条
+        $n.ChgTrackBox.Visibility = $(if ($hasTicks) { 'Visible' } else { 'Collapsed' })
+        $n.ChgEffect.Visibility = $n.ChgTrackBox.Visibility
+        if ($hasTicks -and $null -ne $mi) {
+            # 首帧布局没算完时 ActualWidth 还是 0，用保守值兜底，下一帧自动纠正
+            $w = [double]$n.ChgTrackBox.ActualWidth
+            if ($w -le 0) { $w = 396.0 }
+            $padx = 12.0                      # 两端各留半个刻度宽，免得贴边被裁
+            $inner = [Math]::Max(0.0, $w - $padx * 2)
+            $n.ChgTrack.Width = $inner
+            [System.Windows.Controls.Canvas]::SetLeft($n.ChgTrack, $padx)
+            $sx = $padx + $inner * ([double][int]$sel.Start / 100.0)
+            $ex = $padx + $inner * ([double][int]$sel.Stop / 100.0)
+            [System.Windows.Controls.Canvas]::SetLeft($n.ChgStartNode, $sx - 4)
+            [System.Windows.Controls.Canvas]::SetLeft($n.ChgEndNode, $ex - 4)
+            [System.Windows.Controls.Canvas]::SetLeft($n.ChgSpan, $sx)
+            $n.ChgSpan.Width = [Math]::Max(0.0, $ex - $sx)
+            for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
+                $v = [int]$script:ChargerStartPills[$i].Id
+                [System.Windows.Controls.Canvas]::SetLeft($n["ChgS$i"], ($padx + $inner * ($v / 100.0)) - 12)
+                $clickable = $editable -and ($v -lt [int]$sel.Stop)
+                Set-Pill $n["ChgS$i"] $n["ChgS${i}T"] ($v -eq [int]$sel.Start) '#FF57B0FF'
+                $n["ChgS$i"].Visibility = 'Visible'
+                $n["ChgS$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
+                $n["ChgS$i"].IsHitTestVisible = $clickable
+            }
+            for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
+                $v = [int]$script:ChargerStopPills[$i].Id
+                [System.Windows.Controls.Canvas]::SetLeft($n["ChgE$i"], ($padx + $inner * ($v / 100.0)) - 12)
+                $clickable = $editable -and ($v -gt [int]$sel.Start)
+                Set-Pill $n["ChgE$i"] $n["ChgE${i}T"] ($v -eq [int]$sel.Stop) '#FFB98BFF'
+                $n["ChgE$i"].Visibility = 'Visible'
+                $n["ChgE$i"].Opacity = $(if ($clickable) { 1.0 } else { 0.3 })
+                $n["ChgE$i"].IsHitTestVisible = $clickable
+            }
+            # 一句话说清"离充满还有多远"：只用已有的充电阈值 + 电池百分比，不新增采样
+            $battPct = -1
+            if ($mi.Battery -and $mi.Battery.Supported) { $battPct = [int]$mi.Battery.Percent }
+            $n.ChgEffect.Text = $(if (-not $mi.ChargerEnabled) { '不限制：一直充到 100%' }
+                elseif ($battPct -lt 0) { '到 {0}% 停充' -f [int]$sel.Stop }
+                elseif ($battPct -ge [int]$sel.Stop) { '已到 {0}%，不再充电' -f [int]$sel.Stop }
+                else { '到 {0}% 停充；现在 {1}%，还差 {2} 个百分点' -f [int]$sel.Stop, $battPct, ([int]$sel.Stop - $battPct) })
         }
 
         # ---- 电池健康（启动时读一次；读不到就显示「—」，不编数字）----

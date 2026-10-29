@@ -933,234 +933,229 @@ $(for ($i = 0; $i -lt $script:MaxVolumes; $i++) { New-VolumeRowXaml $i })
           <!-- ============ 性能与散热（原两页合并） ============ -->
           <ScrollViewer x:Name="TabPerf" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
-            <!-- 一键场景放最上面：这是本页唯一"点一下就全改"的东西，比下面任何单点控
-                 制都更常按，而且它能一眼说清"现在是什么状态"。 -->
-            <Grid Margin="0,0,0,6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="场景" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ScenePillRow">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,14">
+              <StackPanel>
+                <Grid Margin="0,0,0,4">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="场景" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ScenePillRow">
 $(New-PillXaml 'Scn' $script:ScenePills)
+                  </StackPanel>
+                </Grid>
+                <TextBlock x:Name="SceneHint" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="66,0,0,6"/>
+                <Grid Margin="0,2,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="自动切换" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ScnARow">
+$(New-PillXaml 'ScnA' $script:OnOffPills)
+                  </StackPanel>
+                  <TextBlock Grid.Column="2" Text="插电/电池时自动套用" Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center"/>
+                </Grid>
               </StackPanel>
-            </Grid>
-            <TextBlock x:Name="SceneHint" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="66,0,0,8"/>
-$(New-SwitchRowXaml 'ScnA' '自动切换' $script:OnOffPills '插电/电池时自动套用')
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="电源" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="PowerPillRow">
-$(New-PillXaml 'Pwr' $script:PowerPills)
-              </StackPanel>
-            </Grid>
-
-            <Grid x:Name="GpuRow" Margin="0,0,0,3">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="显卡" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="GpuPillRow">
-$(New-PillXaml 'Gpu' $script:GpuPills)
-              </StackPanel>
-            </Grid>
-            <!-- The confirm strip gets its own line: it carries two 52px buttons plus the
-                 question, and in the right-hand column of a 468px row it would start on top
-                 of the third mode pill (measured: pills end at x=336). -->
-            <Grid Margin="66,0,0,8">
-              <TextBlock x:Name="GpuNow" Text="" Foreground="#FF98A1B3" FontSize="11" VerticalAlignment="Center"/>
-              <!-- 暂存了新模式以后，这一行的右边会出现「立即重启」：重启申请弹窗关掉之后
-                   （或者用户当时选了"稍后"），想立刻重启还能在这儿点，不用去开始菜单。
-                   它只在"已暂存 ≠ 当前生效"时出现。 -->
-              <Border x:Name="GpuRebootBtn" Background="#FF272C36" CornerRadius="11" MinWidth="72" Padding="0,5"
-                      HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" Visibility="Collapsed">
-                <TextBlock Text="立即重启" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
-              </Border>
-              <StackPanel x:Name="GpuConfirm" Orientation="Horizontal" HorizontalAlignment="Right" Visibility="Collapsed">
-                <TextBlock x:Name="GpuConfirmText" Text="" Foreground="#FFE3C86F" FontSize="11" VerticalAlignment="Center" Margin="0,0,9,0"/>
-                <Border x:Name="GpuOk" Background="#FFE3C86F" CornerRadius="13" MinWidth="52" Padding="0,5" Margin="0,0,7,0" Cursor="Hand">
-                  <TextBlock Text="确认" Foreground="#FF11141A" FontSize="12" FontWeight="SemiBold" TextAlignment="Center"/>
-                </Border>
-                <Border x:Name="GpuCancel" Background="#FF272C36" CornerRadius="13" MinWidth="52" Padding="0,5" Cursor="Hand">
-                  <TextBlock Text="取消" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
-                </Border>
-              </StackPanel>
-            </Grid>
-
-
-            <Grid Margin="0,0,0,4">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="风扇" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="FanPillRow">
-$(New-PillXaml 'Fan' $script:FanPills)
-              </StackPanel>
-            </Grid>
-            <!-- 曲线健康度 on its OWN line. In the 800px window it sat in a third column of
-                 the fan row; at 468px the pill column is 326px wide and the Auto column
-                 started UNDER the third pill (measured: text at x=281, 自定义 pill 259..329),
-                 so the two overlapped. Measured with diag-layout.ps1, not guessed. -->
-            <TextBlock x:Name="CurveHealth" Text="" Foreground="#FF98A1B3" FontSize="11" Margin="66,0,0,8"/>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock x:Name="Ct2RowLabel" Grid.Column="0" Text="节点 2" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal">
-$(New-StepperXaml 'Ct2T' '温度')
-              </StackPanel>
-              <StackPanel Grid.Column="2" Orientation="Horizontal">
-$(New-StepperXaml 'Ct2D' '转速' '%')
-              </StackPanel>
-            </Grid>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock x:Name="Ct3RowLabel" Grid.Column="0" Text="节点 3" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal">
-$(New-StepperXaml 'Ct3T' '温度')
-              </StackPanel>
-              <StackPanel Grid.Column="2" Orientation="Horizontal">
-$(New-StepperXaml 'Ct3D' '转速' '%')
-              </StackPanel>
-            </Grid>
-
-            <!-- 恢复初始 moved here from the title row: it is this tab's rollback button
-                 (power / fan / curve / staged GPU / keyboard lighting), so it belongs next
-                 to the things it undoes instead of competing with the tab buttons. -->
-            <Border x:Name="RevertBtn" Background="#FF272C36" CornerRadius="13" Padding="0,6" Margin="0,10,0,0" Cursor="Hand">
-              <TextBlock x:Name="RevertBtnT" Text="恢复初始（电源·风扇·曲线·显卡·键盘灯）" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
             </Border>
-            <TextBlock x:Name="PerfProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="· 电源 / 风扇 / 显卡 / 键盘灯显示的都是硬件回读值，被别处改掉会立刻跟着变。"/>
-            <TextBlock x:Name="PerfScene" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"
-                       Text="· 节点 1（40°C/28%）与节点 4（100°C/100%）由 EC 固定，这两行只控制中间两档。"/>
-            <TextBlock x:Name="RevertHint" Foreground="#FF98A1B3" FontSize="10.5" TextWrapping="Wrap" Margin="2,8,0,0"
-                       Text="恢复初始：把电源、风扇、曲线、显卡、键盘灯改回本次开机时的值（亮度不动），约 2 秒。"/>
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,14">
+              <StackPanel>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="电源" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="PowerPillRow">
+$(New-PillXaml 'Pwr' $script:PowerPills)
+                  </StackPanel>
+                </Grid>
+                <Grid x:Name="GpuRow" Margin="0,0,0,4">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="显卡" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="GpuPillRow">
+$(New-PillXaml 'Gpu' $script:GpuPills)
+                  </StackPanel>
+                </Grid>
+                <Grid Margin="66,0,0,0">
+                  <TextBlock x:Name="GpuNow" Text="" Foreground="#FF98A1B3" FontSize="11" VerticalAlignment="Center"/>
+                  <Border x:Name="GpuRebootBtn" Background="#FF272C36" CornerRadius="11" MinWidth="72" Padding="0,5"
+                          HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" Visibility="Collapsed">
+                    <TextBlock Text="立即重启" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
+                  </Border>
+                  <StackPanel x:Name="GpuConfirm" Orientation="Horizontal" HorizontalAlignment="Right" Visibility="Collapsed">
+                    <TextBlock x:Name="GpuConfirmText" Text="" Foreground="#FFE3C86F" FontSize="11" VerticalAlignment="Center" Margin="0,0,9,0"/>
+                    <Border x:Name="GpuOk" Background="#FFE3C86F" CornerRadius="13" MinWidth="52" Padding="0,5" Margin="0,0,7,0" Cursor="Hand">
+                      <TextBlock Text="确认" Foreground="#FF11141A" FontSize="12" FontWeight="SemiBold" TextAlignment="Center"/>
+                    </Border>
+                    <Border x:Name="GpuCancel" Background="#FF272C36" CornerRadius="13" MinWidth="52" Padding="0,5" Cursor="Hand">
+                      <TextBlock Text="取消" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,14">
+              <StackPanel>
+                <Grid Margin="0,0,0,4">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="风扇" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="FanPillRow">
+$(New-PillXaml 'Fan' $script:FanPills)
+                  </StackPanel>
+                </Grid>
+                <TextBlock x:Name="CurveHealth" Text="" Foreground="#FF98A1B3" FontSize="11" Margin="66,0,0,8"/>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock x:Name="Ct2RowLabel" Grid.Column="0" Text="节点 2" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"
+                             ToolTip="节点 1（40°C / 28%）与节点 4（100°C / 100%）由 EC 固定，这两行只改中间两档。"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal">
+$(New-StepperXaml 'Ct2T' '温度')
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal">
+$(New-StepperXaml 'Ct2D' '转速' '%')
+                  </StackPanel>
+                </Grid>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock x:Name="Ct3RowLabel" Grid.Column="0" Text="节点 3" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"
+                             ToolTip="节点 1（40°C / 28%）与节点 4（100°C / 100%）由 EC 固定，这两行只改中间两档。"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal">
+$(New-StepperXaml 'Ct3T' '温度')
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal">
+$(New-StepperXaml 'Ct3D' '转速' '%')
+                  </StackPanel>
+                </Grid>
+                <Border x:Name="RevertBtn" Background="#FF272C36" CornerRadius="13" Padding="0,6" Cursor="Hand"
+                        ToolTip="把电源、风扇、曲线、显卡、键盘灯改回本次开机时的值（亮度不动），约 2 秒。">
+                  <TextBlock x:Name="RevertBtnT" Text="恢复初始（电源·风扇·曲线·显卡·键盘灯）" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
+                </Border>
+              </StackPanel>
+            </Border>
+            <!-- 工程说明整段收起：控件名保留，paint 与  一个字都不用改；有用的两句话已挂在上面的 ToolTip。 -->
+            <StackPanel Visibility="Collapsed">
+              <TextBlock x:Name="PerfProto" Text="· 电源 / 风扇 / 显卡 / 键盘灯显示的都是硬件回读值，被别处改掉会立刻跟着变。"/>
+              <TextBlock x:Name="PerfScene" Text="· 节点 1（40°C/28%）与节点 4（100°C/100%）由 EC 固定，这两行只控制中间两档。"/>
+              <TextBlock x:Name="RevertHint" Text="恢复初始：把电源、风扇、曲线、显卡、键盘灯改回本次开机时的值（亮度不动），约 2 秒。"/>
+            </StackPanel>
             </StackPanel>
           </ScrollViewer>
 
           <!-- ============ 键盘灯 ============ -->
           <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="模式" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedModeRow">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,8">
+              <StackPanel>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="模式" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedModeRow">
 $(New-PillXaml 'Led' $script:LedModePills 56)
-              </StackPanel>
-            </Grid>
-
-            <!-- Colour row is shown ONLY for modes that actually take a colour (see the Colors
-                 field on $script:LedModePills): 循环/关闭 hide it entirely. 彩虹 in the swatch
-                 row means "multi-colour" - 静态 draws it per key, 波 hands the colour bands to
-                 the firmware, 呼吸 hands it to the firmware. -->
-            <!-- Colour row. The hint used to sit in a third column on the right; at 468px the
-                 swatches ran underneath it, so every hint on this tab now gets its own line
-                 under its row (uniform rule, no overlap possible). -->
-            <Grid x:Name="LedColorRow" Margin="0,0,0,3">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock x:Name="LedColorLabel" Grid.Column="0" Text="颜色" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-$(New-SwatchXaml 'Rgb' $script:RgbPills)
-              </StackPanel>
-            </Grid>
-            <TextBlock x:Name="LedColorHint" Text="" Foreground="#FF8A93A6" FontSize="11" Margin="66,0,0,8"/>
-
-            <!-- 方向：只有「波」用得到（帧里 d0 = 0xA1/0x71 + 方向），所以这一行只在选中
-                 波的时候出现。提示放在按钮右边（短），不再单独占一行 —— 竖屏下这一页的
-                 高度要用在色盘上（单独一行会把提示挤到色盘上面去）。 -->
-            <Grid x:Name="LedDirRow" Margin="0,0,0,9">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="方向" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedDirPillRow">
-$(New-PillXaml 'Dir' $script:LedDirPills 56)
-              </StackPanel>
-              <TextBlock x:Name="LedDirHint" Grid.Column="2" Text="色带滚过方向" Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center"/>
-            </Grid>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="亮度" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="RgbBrightRow">
-$(New-PillXaml 'RgbB' $script:RgbBrightness 56)
-              </StackPanel>
-            </Grid>
-
-            <Grid Margin="0,0,0,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="66"/>
-                <ColumnDefinition Width="*"/>
-              </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="速度" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedSpeedRow">
-$(New-PillXaml 'Spd' $script:LedSpeedPills 56)
-              </StackPanel>
-            </Grid>
-
-            <!-- 色盘（用户要求：纯色可以直接取色）。只在需要颜色的模式出现（和颜色行同一
-                 个可见性），点/拖都能取色；V 固定 1，亮度是上面那一行的事。
-                 色盘和信息块**并排**：色盘只有 170px 宽，把它单独放一行会在右边留下大片空白
-                 （用户反馈"看起来较宽"），并排之后整块居中，右边那块正好放取到的颜色。 -->
-            <StackPanel x:Name="ColorWheelBox" Margin="0,2,0,6" HorizontalAlignment="Center">
-              <StackPanel Orientation="Horizontal">
-                <Grid>
-                  <Image x:Name="ColorWheel" Width="132" Height="132" Cursor="Cross"/>
-                  <Canvas x:Name="WheelLayer" Width="132" Height="132" IsHitTestVisible="False">
-                    <Ellipse x:Name="WheelMark" Width="14" Height="14" Stroke="#FFEDF0F5" StrokeThickness="2"
-                             Visibility="Collapsed"/>
-                  </Canvas>
+                  </StackPanel>
                 </Grid>
-                <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
-                  <Border x:Name="WheelPick" Width="56" Height="56" CornerRadius="28" Background="#FFFFFFFF"
-                          BorderBrush="#FF2B303B" BorderThickness="1"/>
-                  <TextBlock x:Name="WheelText" Text="--" Foreground="#FFD7DCE6" FontSize="11" FontFamily="Consolas"
-                             Margin="0,8,0,0"/>
-                  <TextBlock x:Name="WheelText2" Text="" Foreground="#FF98A1B3" FontSize="11" FontFamily="Consolas"
-                             Margin="0,3,0,0"/>
-                  <TextBlock x:Name="WheelHint" Text="取到的颜色会立刻写进键盘" Foreground="#FF8A93A6" FontSize="10"
-                             Margin="0,8,0,0" TextWrapping="Wrap" MaxWidth="150"/>
-                </StackPanel>
+                <Grid x:Name="LedColorRow" Margin="0,0,0,3">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock x:Name="LedColorLabel" Grid.Column="0" Text="颜色" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+$(New-SwatchXaml 'Rgb' $script:RgbPills)
+                  </StackPanel>
+                </Grid>
+                <TextBlock x:Name="LedColorHint" Text="" Foreground="#FF8A93A6" FontSize="11" Margin="66,0,0,6"/>
+                <Grid x:Name="LedDirRow" Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="方向" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedDirPillRow">
+$(New-PillXaml 'Dir' $script:LedDirPills 56)
+                  </StackPanel>
+                  <TextBlock x:Name="LedDirHint" Grid.Column="2" Text="色带滚过方向" Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="亮度" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="RgbBrightRow">
+$(New-PillXaml 'RgbB' $script:RgbBrightness 56)
+                  </StackPanel>
+                </Grid>
+                <Grid Margin="0,0,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="66"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="速度" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="LedSpeedRow">
+$(New-PillXaml 'Spd' $script:LedSpeedPills 56)
+                  </StackPanel>
+                </Grid>
               </StackPanel>
+            </Border>
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,8">
+              <StackPanel x:Name="ColorWheelBox" Margin="0" HorizontalAlignment="Stretch">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid Grid.Column="0" VerticalAlignment="Center">
+                    <Image x:Name="ColorWheel" Width="190" Height="190" Cursor="Cross"/>
+                    <Canvas x:Name="WheelLayer" Width="190" Height="190" IsHitTestVisible="False">
+                      <Ellipse x:Name="WheelMark" Width="14" Height="14" Stroke="#FFEDF0F5" StrokeThickness="2"
+                               Visibility="Collapsed"/>
+                    </Canvas>
+                  </Grid>
+                  <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                      <Border x:Name="WheelPick" Width="26" Height="26" CornerRadius="13" Background="#FFFFFFFF"
+                              BorderBrush="#FF2B303B" BorderThickness="1" VerticalAlignment="Center"/>
+                      <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="WheelText" Text="--" Foreground="#FFD7DCE6" FontSize="12" FontFamily="Consolas"/>
+                        <TextBlock x:Name="WheelText2" Text="" Foreground="#FF98A1B3" FontSize="10.5" FontFamily="Consolas" Margin="0,2,0,0"/>
+                      </StackPanel>
+                    </StackPanel>
+                    <TextBlock x:Name="WheelHint" Text="点色盘取色，立刻写进键盘" Foreground="#FF8A93A6" FontSize="10.5"
+                               Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="KbHint" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+            <!-- 工程说明整段收起（控件名保留，paint 与  不动）。 -->
+            <StackPanel Visibility="Collapsed">
+              <TextBlock x:Name="LedProto" Text="· 写入帧 CC 01 6C R G B 00（7 字节，只改颜色不动其它设置）。"/>
+              <TextBlock x:Name="LedScene" Text="· 场景「游戏 / 安静」会把灯色一起切过去。"/>
+              <TextBlock x:Name="LedScope" Text="· 颜色只对 静态 / 呼吸 有效；波动与循环按方向跑。"/>
             </StackPanel>
-
-            <TextBlock x:Name="KbHint" Foreground="#FF98A1B3" FontSize="11"
-                       Text="$script:KbHintBase" TextWrapping="Wrap"/>
-            <TextBlock x:Name="LedProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="· 写入帧 CC 01 6C R G B 00（7 字节，只改颜色不动其它设置）；灯亮没亮没有软件回读，面板用 AppSettings 副本核对。"/>
-            <TextBlock x:Name="LedScene" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"
-                       Text="· 场景「游戏 / 安静」会把灯色一起切过去；在本页改过颜色后，场景高亮会自动熄灭。"/>
-            <TextBlock x:Name="LedScope" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"
-                       Text="· 颜色只对 静态 / 呼吸 有效；波动与循环按方向跑，颜色按不进。" />
             </StackPanel>
           </ScrollViewer>
 
@@ -1169,11 +1164,15 @@ $(New-PillXaml 'Spd' $script:LedSpeedPills 56)
             <StackPanel>
             <!-- 屏幕亮度已经搬到状态页（用户要求），这里不再重复 -->
 
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,8">
+              <StackPanel>
 $(New-SwitchRowXaml 'Tp' '触控板' $script:OnOffPills '注册表 + 原厂通知')
 $(New-SwitchRowXaml 'Wk' 'Win 键' $script:EnablePills '误触不会切走游戏' 56)
 $(New-SwitchRowXaml 'Fl' 'FnLock' $script:OnOffPills 'F1-F12 免按 Fn')
 $(New-SwitchRowXaml 'Ws' 'Win/Fn' $script:SwapPills '交换：左下角两键对调')
 $(New-SwitchRowXaml 'Nl' '数字键盘' $script:OnOffPills '系统 NumLock')
+              </StackPanel>
+            </Border>
 
             <!-- 输入设备：启动时读一次（设备枚举慢，不进采样循环）。键盘灯走的是哪一路 HID、
                  触控板挂在哪个总线上，出问题时要看的正是这两行。 -->
@@ -1223,7 +1222,7 @@ $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label 
             <StackPanel>
             <!-- 电池状态：让充电限制的效果就在旁边看得见（系统给的电量/供电状态），
                  和下面那行的 EC 阈值是同一件事的两头。 -->
-            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,9,14,9" Margin="0,0,0,12">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,4">
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/>
@@ -1282,8 +1281,14 @@ $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label 
                 </StackPanel>
               </Grid>
             </Border>
-            <!-- 电池充电：原厂三选一。自定义时才显示阈值行（和键盘灯的颜色行同一个做法：
-                 控件只在真的有用的时候出现，不用一排放着灰按钮）。 -->
+            <!-- 电池充电：原厂三选一 + 一条「充电窗口」轨道。
+                 轨道上两排刻度：**上排 = 充电开始**（EC 给的 start 候选），**下排 = 充电停止**（stop 候选）。
+                 两个候选集不相等（本机 6 个 vs 5 个），所以不做"一排到底 + 猜这一点该改哪端"——
+                 位置即角色：点上排只会设开始、点下排只会设停止，既不会点错，也点不出 开始 ≥ 停止
+                 （非法的那一颗直接置灰不可点，规则和原来 11 颗药丸完全一样）。
+                 横坐标按真实百分比线性落位：40→50 是 10、90→95 是 5，等宽列会画出一把撒谎的尺子。 -->
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,4">
+              <StackPanel>
             <Grid Margin="0,0,0,4">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="66"/>
@@ -1294,38 +1299,41 @@ $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label 
 $(New-PillXaml 'Chg' $script:ChargerPills 74)
               </StackPanel>
             </Grid>
-            <TextBlock x:Name="ChargerHint" Text="" Foreground="#FF8A93A6" FontSize="11" Margin="66,0,0,8"/>
 
-            <!-- 自定义阈值行**常驻**（用户要求）：不管当前是哪个档都看得见，
-                 但只有选中「自定义」时可选中；其它档位下变暗且点不动（和风扇节点行同一个做法）。
-                 这样"自定义里有什么"一眼可见，也不会出现"点开了又收回去"。 -->
+            <!--
+            充电窗口**常驻**，但只有自定义档可点（和风扇节点行同一套做法：看得见、点不动）。
+            原来这里还有一行 ChargerHint 写"EC：70% 起 / 80% 停 · 点自定义可改阈值"，
+            那句话现在就在右上角读数里（选择值 → 轨道上的两颗亮点），留着就是同一件事说两遍。
+            下方 ChgEffect 是"还差多少充满"的人话，数据全部来自已有字段（不新增采样）。 -->
             <StackPanel x:Name="ChargerCustom">
-              <Grid Margin="0,0,0,8">
+              <Grid Margin="0,0,0,3">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="66"/>
                   <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="充电开始" x:Name="ChgStartLabel" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ChgStartRow">
-$(New-PillXaml 'ChgS' $script:ChargerStartPills 32)
-                </StackPanel>
+                <TextBlock Grid.Column="0" x:Name="ChgStartLabel" Text="充电窗口" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" x:Name="ChgStopLabel" Text="--" Foreground="#FFD7DCE6" FontFamily="Consolas" FontSize="11.5"
+                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
               </Grid>
-              <Grid Margin="0,0,0,9">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="66"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="充电停止" x:Name="ChgStopLabel" Foreground="#FF98A1B3" FontSize="12" VerticalAlignment="Center"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" x:Name="ChgStopRow">
-$(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
-                </StackPanel>
+              <Grid x:Name="ChgTrackBox" Height="44" Margin="66,2,0,0">
+                <Canvas x:Name="ChgNodes">
+                  <Border x:Name="ChgTrack" Width="396" Height="8" CornerRadius="4" Background="#FF262A33" Canvas.Left="8" Canvas.Top="18"/>
+                  <Border x:Name="ChgSpan" Width="0" Height="8" CornerRadius="4" Background="#FF57B0FF" Canvas.Left="8" Canvas.Top="18"/>
+                  $(for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) { $v = [int]$script:ChargerStartPills[$i].Id; '<Border x:Name="ChgS' + $i + '" Width="24" Height="15" CornerRadius="7" Background="#FF262A33" Cursor="Hand" Visibility="Collapsed" Canvas.Top="0" ToolTip="充电开始 ' + $v + '%"><TextBlock x:Name="ChgS' + $i + 'T" Text="' + $v + '" FontSize="9.5" Foreground="#FF98A1B3" TextAlignment="Center" VerticalAlignment="Center"/></Border>' })
+                  $(for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) { $v = [int]$script:ChargerStopPills[$i].Id; '<Border x:Name="ChgE' + $i + '" Width="24" Height="15" CornerRadius="7" Background="#FF262A33" Cursor="Hand" Visibility="Collapsed" Canvas.Top="29" ToolTip="充电停止 ' + $v + '%"><TextBlock x:Name="ChgE' + $i + 'T" Text="' + $v + '" FontSize="9.5" Foreground="#FF98A1B3" TextAlignment="Center" VerticalAlignment="Center"/></Border>' })
+                  <Border x:Name="ChgStartNode" Width="8" Height="8" CornerRadius="4" Background="#FF57B0FF" Canvas.Top="18" IsHitTestVisible="False"/>
+                  <Border x:Name="ChgEndNode" Width="8" Height="8" CornerRadius="4" Background="#FFB98BFF" Canvas.Top="18" IsHitTestVisible="False"/>
+                </Canvas>
               </Grid>
-            </StackPanel>
+              <TextBlock x:Name="ChgEffect" Text="" Foreground="#FF8A93A6" FontSize="10.5" Margin="66,2,0,0" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              </StackPanel>
+            </Border>
 
 
             <!-- 保养建议：按当前电池状态真算出来的几句话（不是固定文案）。
                  判据写在 panel-paint.ps1 的 batt 分支里，这样文案和判据不会分家。 -->
-            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,10,14,10" Margin="0,6,0,0">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,4">
               <StackPanel>
                 <TextBlock Text="保养建议" Foreground="#FF8A93A6" FontSize="10.5" Margin="0,0,0,5"/>
                 <TextBlock x:Name="BattAdvice" Text="--" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="17"/>
@@ -1333,7 +1341,7 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
             </Border>
             <!-- 电池信息：来自 root\wmi 的 BatteryStaticData（启动时读一次，运行期不变）。
                  循环次数本机不报（读回 0），所以不列这一项。 -->
-            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,10,14,10" Margin="0,6,0,0">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,4">
               <StackPanel>
                 <TextBlock Text="电池信息" Foreground="#FF8A93A6" FontSize="10.5" Margin="0,0,0,5"/>
                 <Grid>
@@ -1388,6 +1396,8 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
           <ScrollViewer x:Name="TabSys" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
             <StackPanel>
             <!-- 管的是程序自己：开机自启 / 托盘 / 更新检查。全在设置文件里，不碰 EC。 -->
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,2">
+              <StackPanel>
 $(New-SwitchRowXaml 'Auto' '开机自启' $script:AutostartPills '登录后自动启动')
 $(New-SwitchRowXaml 'Tray' '收进托盘' $script:OnOffPills '不弹窗口，只留托盘图标')
 
@@ -1400,15 +1410,21 @@ $(New-SwitchRowXaml 'Tray' '收进托盘' $script:OnOffPills '不弹窗口，只
               <TextBlock x:Name="AboutUpdateStatus" Text="" Foreground="#FF8A93A6" FontSize="11"
                          Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
             </StackPanel>
+              </StackPanel>
+            </Border>
 
             <!-- 本机环境：值全部来自真实来源（EXE 自己的时间戳、本次运行的位置、DCHU 真选中的 DLL）。 -->
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,2">
+              <StackPanel>
             <StackPanel x:Name="AboutInfo">
 $(foreach ($r in $script:AboutRows) { New-AboutRowXaml ("About_" + $r.Key) $r.Label })
             </StackPanel>
+              </StackPanel>
+            </Border>
 
             <!-- 运行记录：这一页管的是程序自己，所以"开了多久、日志多大、写在哪"都在这。
                  四个值全是只读、都在重画时当场算，不占采样通道。 -->
-            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,2">
               <StackPanel>
 $(New-AboutRowXaml 'RunUp' '已运行')
 $(New-AboutRowXaml 'RunFreq' '采样')
@@ -1419,10 +1435,10 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
 
             <!-- 操作提示：这几条原来只写在 README 里，装完不看文档的人根本不知道
                  × 只是收托盘、真退出在托盘右键。放在关于页成本最低。 -->
-            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,10,14,10" Margin="0,10,0,0">
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,2">
               <StackPanel>
-                <TextBlock Text="操作提示" Foreground="#FF8A93A6" FontSize="11" Margin="0,0,0,6"/>
-                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="18"
+                <TextBlock Text="操作提示" Foreground="#FF8A93A6" FontSize="11" Margin="0,0,0,3"/>
+                <TextBlock Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" LineHeight="15"
                            Text="· 托盘图标双击 = 打开面板，右键 = 菜单（电源/风扇/键盘灯都在那）&#10;· 右上 – 和 × 都是收进托盘，不是退出；真退出用 Alt+F4 或托盘右键&#10;· 非 X370SN 机型：加 --force-write 启动可临时放行写入"/>
               </StackPanel>
             </Border>
@@ -1471,13 +1487,15 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
                 <TextBlock Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap"
                            Text="· 机型守卫只拦写入；只读监控在任何机器上都能用"/>
               </StackPanel>
-            </Border>            <TextBlock x:Name="AboutFeatures" Foreground="#FF8A93A6" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
-                       Text="功能：状态监控 · 电源模式 · 风扇曲线（可自定义节点） · 显卡模式（重启生效） · 键盘灯（静态/波/呼吸/循环 + 色盘取色） · 电池充电上限 · 亮度/触控板/Win 键/FnLock/数字键盘 · 托盘菜单 · 开机自启 · – / × 都是收进托盘（真退出：托盘右键 → 退出，或 Alt+F4）"/>
-            <TextBlock x:Name="AboutProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="写入一律经 SetDCHU_Data(121, {值,0,0,子项}) → AcpiBridge.sys → ACPI _DSM；键盘灯是另一条路，走 HID 的 CC 01 6C R G B 00。"/>                        <TextBlock x:Name="AboutNote" Foreground="#FF98A1B3" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="原理：温度/风扇/模式/键盘灯都走原厂那条 InsydeDCHU → AcpiBridge 通道（ACPI\CLV0001），和原厂控制中心用的是同一条路；每次写入都会从硬件读回校验，状态栏绿色=一致、橙色=不一致。显卡模式是开机前值，只能重启后生效，所以本面板只暂存、不替你重启。"/>
-            <TextBlock x:Name="AboutDisclaimer" Foreground="#FF8A93A6" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="个人自用工具，与蓝天（Clevo）及其代工厂无关；所有写入都基于本机实测逆向出来的协议，换机器不保证可用。"/>
+            </Border>
+            <Border Background="#FF1E222A" BorderBrush="#FF2B303B" BorderThickness="1" CornerRadius="10" Padding="14,8,14,8" Margin="0,0,0,8">
+              <StackPanel>
+                <TextBlock x:Name="AboutFeatures" Foreground="#FF98A1B3" FontSize="11" TextWrapping="Wrap" Text="功能：状态监控 · 电源模式 · 风扇曲线 · 显卡模式 · 键盘灯 · 电池充电上限 · 触控板 / Win / FnLock / 数字键盘 · 托盘菜单 · 开机自启"/>
+                <TextBlock x:Name="AboutProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0" Text="写入经 SetDCHU_Data(121, {值,0,0,子项}) → AcpiBridge.sys → ACPI _DSM；键盘灯另走 HID 的 CC 01 6C R G B 00。"/>
+                <TextBlock x:Name="AboutNote" Foreground="#FF98A1B3" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" Text="每次写入都从硬件读回校验（状态栏绿色=一致、橙色=不一致）；显卡模式只能重启后生效，本面板只暂存。"/>
+                <TextBlock x:Name="AboutDisclaimer" Foreground="#FF8A93A6" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0" Text="个人自用工具，与蓝天（Clevo）及其代工厂无关；写入协议基于本机实测逆向，换机器不保证可用。"/>
+              </StackPanel>
+            </Border>
             </StackPanel>
           </ScrollViewer>
 
@@ -1525,7 +1543,8 @@ $names = @('SubTitle', 'TitleIcon', 'CloseBtn', 'TitleBar', 'CpuHeader', 'CpuTem
     'AboutCheckUpdateBtn', 'AboutCheckUpdateT', 'AboutUpdateStatus',
     'LedDirRow', 'LedDirPillRow', 'LedDirHint', 'WheelText2', 'WheelHint',
     'LedModeRow', 'LedColorRow', 'LedColorHint', 'LedSpeedRow',
-    'ChargerRow', 'ChargerHint', 'ChargerCustom', 'ChgStartRow', 'ChgStopRow', 'ChgStartLabel', 'ChgStopLabel',
+    'ChargerRow', 'ChargerCustom', 'ChgStartLabel', 'ChgStopLabel',
+    'ChgTrackBox', 'ChgTrack', 'ChgSpan', 'ChgNodes', 'ChgStartNode', 'ChgEndNode', 'ChgEffect',
     'ColorWheelBox', 'ColorWheel', 'WheelLayer', 'WheelMark', 'WheelPick', 'WheelText',
     'BattBar', 'BattText', 'BattAdvice',
     'BrightSlider', 'BrightVal',
@@ -1798,6 +1817,10 @@ for ($i = 0; $i -lt $script:ChargerPills.Count; $i++) {
 for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
     $v = [int]$script:ChargerStartPills[$i].Id
     $n["ChgS$i"].Add_MouseLeftButtonUp({
+        # 点上排刻度就直接进"自定义"档（省掉先点「自定义」那一下），并挡掉槽忙时的重复点击
+        if (-not (Test-ReqSlotFree)) { $n.StatusText.Text = '上一次写入还没完成，稍等一下再点'; return }
+        $script:MiscSel.Charger = 'custom'
+        $script:MiscSel.CustomOpen = $true
         $script:MiscSel.Start = $v
         Request-Misc -Sub 'start' -Value ([pscustomobject]@{ Start = $v; Stop = [int]$script:MiscSel.Stop })
         Save-MyConfig 'ChargerEnabled' 1
@@ -1807,6 +1830,9 @@ for ($i = 0; $i -lt $script:ChargerStartPills.Count; $i++) {
 for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
     $v = [int]$script:ChargerStopPills[$i].Id
     $n["ChgE$i"].Add_MouseLeftButtonUp({
+        if (-not (Test-ReqSlotFree)) { $n.StatusText.Text = '上一次写入还没完成，稍等一下再点'; return }
+        $script:MiscSel.Charger = 'custom'
+        $script:MiscSel.CustomOpen = $true
         $script:MiscSel.Stop = $v
         Request-Misc -Sub 'stop' -Value ([pscustomobject]@{ Start = [int]$script:MiscSel.Start; Stop = $v })
         Save-MyConfig 'ChargerEnabled' 1
