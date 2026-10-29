@@ -1561,6 +1561,11 @@ $n.TitleBar.Add_MouseLeftButtonDown({
 })
 # × 也收进托盘（用户要的：点 × 不该把程序关掉）。**真退出**仍然有两条明确的路：
 # 托盘右键 → 退出，或者 Alt+F4（那条走的是 WM_CLOSE，不经过这个按钮）。
+# 采样器降频：所有"显示/隐藏"路径（– / × / 托盘菜单 / 双击 / 单实例 show.request）都会
+# 触发这一个事件，不用在每处撒标志。事件在 UI 线程跑，只写一个布尔到 Sync 表，采样器只读。
+$script:Win.Add_IsVisibleChanged({
+    try { $script:Sync.PanelVisible = [bool]$script:Win.IsVisible } catch { }
+})
 $n.CloseBtn.Add_MouseLeftButtonDown({ Hide-ToTray })
 $n.CloseBtn.ToolTip = '收进托盘（退出：托盘右键 → 退出，或 Alt+F4）'
 $n.MinBtn.ToolTip = '收进托盘（后台继续监控）'
@@ -1604,6 +1609,9 @@ $script:Sync.OnAcLast = $null     # 上一次看到的供电状态；null = 还�
 $script:Sync.AcTick = 0
 $script:Sync.SceneIndex = -1
 $script:Sync.BrightWrote = $false  # 用户/场景写过亮度后就别再补记基线（见采样器里的"亮度基线补记"）
+# 采样器降频用：窗口可见=用户在看，250ms 一采；收进托盘=没人看，1500ms 一采。
+# 初值按"启动直接进托盘"判断；之后由 IsVisibleChanged 事件维护（见下面的挂接）。
+$script:Sync.PanelVisible = -not [bool]$script:Settings.StartToTray
 $script:Sync.BrightTick = 0
 # the 杂项 tab's state is read on a slower cadence than the sensors (once a second, and only
 # while that tab is on screen): brightness goes through WMI and the touchpad through the
@@ -2786,7 +2794,11 @@ $sampler = {
       catch {
         Add-Content -LiteralPath $S.LogPath -Value ("SAMPLER-ERR " + $_.Exception.ToString()) -ErrorAction SilentlyContinue
       }
-      Start-Sleep -Milliseconds 250
+      # 采样器降频：窗口藏着时没必要 1.5Hz 地读 WMI / Get-Counter / NVML / DCHU
+      # （静置功耗的大头就在这儿，不是重画）。窗口一露出来立刻回到 250ms，
+      # 所以"点开就看到新鲜数字"的手感不变，只有后台闲置时省电。
+      $idleMs = $(if ($S.PanelVisible) { 250 } else { 1500 })
+      Start-Sleep -Milliseconds $idleMs
     }
 }
 
