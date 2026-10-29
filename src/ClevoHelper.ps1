@@ -259,7 +259,7 @@ $script:PanelStartAt = Get-Date
 #   2) GitHub Release 的 tag（发布脚本用 tools\Publish-Release.ps1）
 # build-exe.ps1 会**从这个文件里正则读出版本号**，写进 exe 的文件版本属性 ——
 # 所以这个字符串就是全项目唯一的版本来源（运行时显示 + exe 属性页都来自它）。
-$script:AppVersion = '1.3'
+$script:AppVersion = '1.4'
 $script:AuthorName = '极夜光'
 $script:AuthorMail = 'yeguang225@outlook.com'
 
