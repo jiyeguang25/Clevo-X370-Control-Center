@@ -187,9 +187,20 @@ function Get-BatteryHealth {
             # 显示制造日期——它是真值，也能用来判断电池年龄。
             try { if ($sd.ManufactureDate) { $r.Made = [string]$sd.ManufactureDate } } catch { }
                     # 静态身份：运行期不变，电池页用来回答"这块电池是谁"。
-                    try { if ($sd.Manufacturer) { $r.Mfr = [string]$sd.Manufacturer } } catch { }
+                    try { if ($sd.ManufactureName) { $r.Mfr = [string]$sd.ManufactureName } } catch { }
                     try { if ($sd.DeviceName) { $r.Dev = [string]$sd.DeviceName } } catch { }
-                    try { if ($sd.Chemistry) { $r.Chem = [string]$sd.Chemistry.Trim() } } catch { }
+                    try {
+                        # Chemistry 是 SmartBattery 规范：4 个 ASCII 字符按小端塞进一个 DWORD。
+                        # 本机实测 0x4E4F494C → 字节 4C 49 4F 4E → "LION"（锂离子）。
+                        # 以前直接 ToString() 把 1313818956 丢到界面上，用户看到的是个无意义大数。
+                        if ($sd.Chemistry) {
+                            $cb = [BitConverter]::GetBytes([uint32]$sd.Chemistry)
+                            $cs = -join ($cb | ForEach-Object { [char]$_ })
+                            if ($cs -eq 'LION') { $r.Chem = '锂离子 LION' }
+                            elseif ($cs -eq 'LIP') { $r.Chem = '锂聚合物 LIP' }
+                            elseif ($cs -match '^[\x20-\x7E]{4}$') { $r.Chem = $cs }
+                        }
+                    } catch { }
             try {
                 $fc = Get-WmiObject -Namespace root\wmi -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1
                 if ($fc -and [int]$fc.FullChargedCapacity -gt 0) {

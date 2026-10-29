@@ -710,12 +710,9 @@ function Update-Panel {
             $n.BhDesign.Text = ('{0:N1} Wh' -f ($bh.Design / 1000.0))
             $n.BhFull.Text = $(if ($bh.Full) { '{0:N1} Wh' -f ($bh.Full / 1000.0) } else { '—' })
             $n.BhHealth.Text = $(if ($bh.Health) { '{0:N1}%' -f $bh.Health } else { '—' })
-                        # ManufactureDate 是 WMI 原始串（20240612000000.000000+000），这里只取年月。
-            $madeRaw = [string]$bh.Made
-            $madeDisp = $(if ($madeRaw -match '^(\d{4})-(\d{2})') { '{0}-{1}' -f $Matches[1], $Matches[2] }
-                          elseif ($madeRaw -match '^(\d{4})(\d{2})') { '{0}-{1}' -f $Matches[1], $Matches[2] }
-                          else { '—' })
-            $n.BhCycles.Text = $madeDisp
+            # 这台机器的 ManufactureDate 被 BIOS 遮蔽（实测返回 **************.**********），
+            # 循环次数又恒为 0，所以这一格改显示「损耗」= 100 - 健康度：两个数都是实测的。
+            $n.BhCycles.Text = $(if ($bh.Health) { '{0:N1}%' -f (100.0 - [double]$bh.Health) } else { '—' })
             $n.BhMfr.Text  = $(if ($bh.Mfr)  { [string]$bh.Mfr }  else { '—' })
             $n.BhDev.Text  = $(if ($bh.Dev)  { [string]$bh.Dev }  else { '—' })
             $n.BhChem.Text = $(if ($bh.Chem) { [string]$bh.Chem } else { '—' })
@@ -725,14 +722,20 @@ function Update-Panel {
                 $wb = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
                 if ($wb -and $wb.EstimatedRunTime -and [int]$wb.EstimatedRunTime -lt 100000) { $runMin = [int]$wb.EstimatedRunTime }
             } catch { }
-            $n.BhLeft.Text = $(if ($runMin -gt 0) { '{0} 小时 {1} 分' -f [int]($runMin / 60), ($runMin % 60) } else { '接电源' })
+            $n.BhLeft.Text = $(if ($runMin -gt 0) { $(if ($runMin -ge 60) { '{0} 小时 {1} 分' -f [int]($runMin / 60), ($runMin % 60) } else { '{0} 分钟' -f $runMin }) } else { '接电源' })
             $n.BhNow.Text = $(if ($bh.Now) { '{0:N1} Wh' -f ($bh.Now / 1000.0) } else { '—' })
             $n.BhVolt.Text = $(if ($bh.VoltMv) { '{0:N2} V' -f ($bh.VoltMv / 1000.0) } else { '—' })
             # 充放功率：接电源时看充电功率，电池供电时看放电功率；两者都是 0 就显示 0.0 W（真的静置）。
             $rateMw = $(if ($null -ne $bh.ChargeMw -and [int]$bh.ChargeMw -gt 0) { [int]$bh.ChargeMw }
                         elseif ($null -ne $bh.DischargeMw -and [int]$bh.DischargeMw -gt 0) { -[int]$bh.DischargeMw }
                         else { 0 })
-            $n.BhRate.Text = $(if ($null -ne $bh.ChargeMw -or $null -ne $bh.DischargeMw) { '{0:N1} W' -f ($rateMw / 1000.0) } else { '—' })
+            # 放电写成「放电 48.8 W」而不写「-48.8 W」：负号在界面上会被读成"是不是接反了"。
+            if ($null -ne $bh.ChargeMw -or $null -ne $bh.DischargeMw) {
+                $n.BhRate.Text = $(if ($rateMw -gt 0) { '充电 {0:N1} W' -f ($rateMw / 1000.0) }
+                                  elseif ($rateMw -lt 0) { '放电 {0:N1} W' -f ([Math]::Abs($rateMw) / 1000.0) }
+                                  else { '0.0 W' })
+            }
+            else { $n.BhRate.Text = '—' }
             # 温度字段是十分之一开尔文（2982 = 25.05 ℃）；0 表示不报。
             $n.BhTemp.Text = $(if ($bh.TempK10 -and [int]$bh.TempK10 -gt 1000) { '{0:N1} ℃' -f ([int]$bh.TempK10 / 10.0 - 273.15) } else { '—' })
 

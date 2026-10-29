@@ -1248,7 +1248,7 @@ $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label 
                   <TextBlock x:Name="BhHealth" Text="--" Foreground="#FF6FE38A" FontSize="11.5"/>
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
-                  <TextBlock Text="制造 " Foreground="#FF8A93A6" FontSize="11"/>
+                  <TextBlock Text="损耗 " Foreground="#FF8A93A6" FontSize="11"/>
                   <TextBlock x:Name="BhCycles" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
                 </StackPanel>
                 <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Margin="0,6,0,0">
