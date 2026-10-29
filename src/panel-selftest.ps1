@@ -264,3 +264,60 @@ function Test-ShowRequest {
     catch { Write-Dbg ('show.request failed: ' + $_.Exception.Message) }
 }
 
+function Test-HandlerCommands {
+    <#
+    事件处理器里出现的命令名，必须真的存在。
+    起因（真事故）：电池页「生成 ↗」的处理器第一行写 Set-Status —— 这个函数从来没定义过。
+    每次点击都在第一行抛 CommandNotFoundException，catch 里又调一次同一个名字，异常逃出
+    处理器被 WPF 当未处理异常 → 面板进程消失。用户看到的是「点一下就关了」，日志却是空的
+    （当时处理器一行日志都不写）。语法检查抓不到这种错：名字是合法字符串，能不能解析只有
+    Get-Command 知道。
+
+    做法：把主文件解析成 AST，找所有 Add_MouseLeftButtonUp / Add_Click 这类**方法调用**
+    （注意：$n.X.Add_Click({...}) 是 InvokeMemberExpressionAst，不是 CommandAst ——
+    第一版按 CommandAst 找，结果永远 0 个，报了个假 PASS），再进它们的脚本块里把命令名
+    全部掏出来挨个 Get-Command。
+
+    检查数为 0 一律算失败：那说明探测器没工作，不是"没有问题"。
+    #>
+    [CmdletBinding()] param()
+    $res = [pscustomobject]@{ Checked = 0; Handlers = 0; Missing = @() }
+    try {
+        $target = Join-Path $PSScriptRoot 'ClevoHelper.ps1'
+        $errs = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($target, [ref]$null, [ref]$errs)
+
+        $invokes = $ast.FindAll({
+            param($a)
+            $a -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+            ([string]$a.Member.Value) -match '^Add_(MouseLeftButtonUp|MouseLeftButtonDown|Click|Checked|Unchecked|ValueChanged|SelectionChanged|MouseWheel|KeyDown|Loaded)$'
+        }, $true)
+
+        foreach ($inv in $invokes) {
+            $res.Handlers++
+            # 参数里有脚本块（{...} 或 {...}.GetNewClosure() 都算），把里面的命令名掏出来
+            $blocks = $inv.FindAll({
+                param($x) $x -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+            }, $true)
+            foreach ($sb in $blocks) {
+                $cmds = $sb.ScriptBlock.FindAll({
+                    param($c) $c -is [System.Management.Automation.Language.CommandAst]
+                }, $true)
+                foreach ($cmd in $cmds) {
+                    $name = [string]$cmd.GetCommandName()
+                    if (-not $name) { continue }
+                    # 关键字虽然解析成 CommandAst，但不是命令
+                    if ($name -match '^(if|elseif|else|foreach|foreach-object|while|for|return|try|catch|throw|switch|do|until|break|continue)$') { continue }
+                    $res.Checked++
+                    if (-not (Get-Command -Name $name -ErrorAction SilentlyContinue)) {
+                        $res.Missing += ('{0}（第 {1} 行）' -f $name, $cmd.Extent.StartLineNumber)
+                    }
+                }
+            }
+        }
+        if ($res.Handlers -eq 0) { $res.Missing += '探测器失效：一个事件挂接都没找到，结论不可信' }
+        elseif ($res.Checked -eq 0) { $res.Missing += '探测器失效：找到了挂接但没掏出任何命令名' }
+    }
+    catch { $res.Missing += ('检查器本身出错：' + $_.Exception.Message) }
+    $res
+}

@@ -6,6 +6,21 @@
 #   * $script: 开头的变量是全体共享的，改之前先想清楚谁会读到它；
 #   * 界面控件都在主文件的 $n 里（$n.StatusText 这种），这里直接用即可。
 
+# 状态栏写一句话（默认用"普通信息"的灰）。
+# 为什么单独做一层：界面里改状态栏就是 $n.StatusText.Text，加颜色要再写一行 Get-Brush，
+# 到处手写两边容易只改一半。更要紧的是——它的名字曾经被**凭空用过**：
+# 电池页的「生成 ↗」处理器写了 Set-Status，可这个函数从来没定义过，每次点击第一行就抛
+# CommandNotFoundException，catch 里又调了一次同一个名字，异常逃出处理器被 WPF 当未处理
+# 异常，面板直接消失（用户原话「点一下就关了」）。所以现在既补上它，也用自检把
+# 「处理器里调了不存在的命令」这类错误卡住（见 panel-selftest.ps1 的 Test-HandlerCommands）。
+function Set-Status {
+    param([string]$Text, [string]$Color = '#FF98A1B3')
+    try {
+        $n.StatusText.Text = $Text
+        $n.StatusText.Foreground = Get-Brush $Color
+    }
+    catch { Write-Dbg ('Set-Status failed: ' + $_.Exception.Message) }
+}
 function Save-Settings {
     try {
         # -Depth 8：FanCurve / Led / Saved 都是嵌套的哈希表，默认深度会把里面那层丢掉

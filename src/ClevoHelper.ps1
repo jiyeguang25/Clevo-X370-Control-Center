@@ -1382,8 +1382,8 @@ $(New-PillXaml 'Chg' $script:ChargerPills 74)
                       <TextBlock x:Name="BhTrendTxt" Text="" Foreground="#FF98A1B3" FontSize="11" Margin="7,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                      <TextBlock x:Name="BhReport" Text="生成 ↗" Foreground="#FF57B0FF" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
-                      <TextBlock x:Name="BhDel" Text="删除" Foreground="#FFE38A6F" FontSize="11" Margin="9,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                      <TextBlock x:Name="BhReport" Text="生成 ↗" Foreground="#FF57B0FF" FontSize="11" VerticalAlignment="Center" Cursor="Hand" Background="#01000000" Padding="4,2"/>
+                      <TextBlock x:Name="BhDel" Text="删除" Foreground="#FFE38A6F" FontSize="11" Margin="7,0,0,0" VerticalAlignment="Center" Cursor="Hand" Background="#01000000" Padding="4,2"/>
                     </StackPanel>
                   </Grid></Grid>
               </StackPanel>
@@ -2019,25 +2019,53 @@ $n.TabBtnKb.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'kb' })
 $n.TabBtnBatt.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'batt' })
 $n.TabBtnMisc.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'misc' })
 $n.TabBtnSys.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'sys' })
-# ---- 「生成报告」：只在用户点了才跑 powercfg（约 1 秒），跑完由系统默认程序打开 ----
+# ---- 「生成报告」：只在用户点了才跑 powercfg（约 0.6 秒），跑完由系统默认程序打开 ----
+# 每一步都写日志：以前这里一行日志都没有，用户报「点了就关」时无法判断是没点到、
+# 生成失败、还是打开那一步把窗口带走了。日志才是第一手证据，状态栏只显示最后一句。
 $n.BhReport.Add_MouseLeftButtonUp({
+    $swR = [System.Diagnostics.Stopwatch]::StartNew()
+    Write-Dbg 'BHREPORT: click received'
     try {
         Set-Status '正在生成电池报告…'
         $r = Update-BatteryReport
+        Write-Dbg ('BHREPORT: generated ok={0} {1:N0}ms path={2} err={3}' -f $r.Ok, $swR.ElapsedMilliseconds, $r.Path, $r.Error)
         if (-not $r.Ok) { Set-Status ('生成失败：' + $r.Error); return }
         $script:BattHistory = Get-BatteryHistory -Refresh
-        Set-Status ('已生成电池报告：' + $r.Path)
-        Start-Process -FilePath $r.Path
-    } catch { Set-Status ('生成报告出错：' + $_.Exception.Message) }
+        # 打开：先试系统关联（Edge），失败再试显式 msedge，最后退回资源管理器选中文件。
+        # 只认一种方式的话，一旦文件关联被改坏，用户看到的就是「点了没反应」。
+        $opened = ''
+        try {
+            Start-Process -FilePath $r.Path -ErrorAction Stop
+            $opened = 'shell'
+        } catch {
+            Write-Dbg ('BHREPORT: shell open failed -> ' + $_.Exception.Message)
+            $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
+            if (-not (Test-Path $edge)) { $edge = Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe' }
+            try {
+                if (Test-Path $edge) {
+                    Start-Process -FilePath $edge -ArgumentList @('--new-window', ('file:///' + ($r.Path -replace '\\', '/'))) -ErrorAction Stop
+                    $opened = 'msedge'
+                } else { throw '找不到 msedge.exe' }
+            } catch {
+                Write-Dbg ('BHREPORT: msedge open failed -> ' + $_.Exception.Message)
+                Start-Process -FilePath 'explorer.exe' -ArgumentList ('/select,"' + $r.Path + '"')
+                $opened = 'explorer'
+            }
+        }
+        Write-Dbg ('BHREPORT: opened via ' + $opened)
+        Set-Status ('已生成电池报告（{0:N0} ms）：{1}' -f $swR.ElapsedMilliseconds, $r.Path)
+    } catch { Write-Dbg ('BHREPORT: FAILED -> ' + $_.Exception.Message); Set-Status ('生成报告出错：' + $_.Exception.Message) }
 })
 # ---- 「删除」：删掉生成出来的报告文件；容量历史走 7 天缓存，删报告不影响折线 ----
 $n.BhDel.Add_MouseLeftButtonUp({
+    Write-Dbg 'BHDEL: click received'
     try {
         $rp = Get-BatteryReportPath
         if (-not (Test-Path $rp)) { Set-Status '还没有生成过电池报告'; return }
         Remove-Item $rp -Force -ErrorAction Stop
+        Write-Dbg ('BHDEL: removed ' + $rp)
         Set-Status ('已删除电池报告：' + $rp)
-    } catch { Set-Status ('删除失败（可能还开在浏览器里）：' + $_.Exception.Message) }
+    } catch { Write-Dbg ('BHDEL: FAILED -> ' + $_.Exception.Message); Set-Status ('删除失败（可能还开在浏览器里）：' + $_.Exception.Message) }
 })
 $n.TabBtnAbout.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'about' })
 
@@ -3092,6 +3120,14 @@ if ($SelfTest) {    # Exercises the exact path a pill click takes: Request-Write
                     foreach ($m in $wc.Missing) { Write-Dbg ('SELFTEST wiring   - ' + $m) }
                 }
                 else { Write-Dbg 'SELFTEST wiring: PASS（每个该接的控件都接了事件）' }
+# ---- 处理器里的命令名必须存在（真事故见 Test-HandlerCommands 的注释：Set-Status 不存在，
+#      点一下就把面板送走）。放在接线自检后面：接线自检管「有没有接」，这条管「接了能不能跑」。----
+$script:HandlerCmds = Test-HandlerCommands
+Write-Dbg ('SELFTEST handler-cmds: 挂接={0} 检查={1} 缺={2}' -f $script:HandlerCmds.Handlers, $script:HandlerCmds.Checked, $script:HandlerCmds.Missing.Count)
+if ($script:HandlerCmds.Missing.Count) {
+    Write-Dbg 'SELFTEST handler-cmds FAIL:'
+    foreach ($m in $script:HandlerCmds.Missing) { Write-Dbg ('SELFTEST handler-cmds   - ' + $m) }
+} else { Write-Dbg 'SELFTEST handler-cmds: PASS（处理器里的命令名全能解析）' }
                 $sc = $script:ScopeCheck
                 Write-Dbg ('SELFTEST scope: checked={0} 闭包块={1} 坑={2} {3}' -f `
                     $sc.Checked, $sc.Blocks, $sc.Hits.Count, $sc.Note)
