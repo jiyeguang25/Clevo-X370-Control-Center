@@ -27,7 +27,7 @@ function Set-Pill($border, $text, [bool]$on, [string]$accent) {
         $text.FontWeight = 'SemiBold'
     }
     else {
-        $border.Background = Get-Brush '#FF262A33'
+        $border.Background = Get-Brush '#FF272C36'
         $text.Foreground = Get-Brush '#FF98A1B3'
         $text.FontWeight = 'Normal'
     }
@@ -399,11 +399,13 @@ function Update-Panel {
     $n.Ct2DUnit.Text = '%'; $n.Ct3DUnit.Text = '%'
     # 说清楚这两行到底是"谁的"曲线：用户自己配的那份（存 settings.json，重启面板也在）还是
     # 从 EC 当前表吸附来的。以前这里没写，用户看到 60/38、86/59 会以为"我配的丢了"。
-    $n.CustHint.Text = $(if ($script:FanCurveSource -eq 'settings') {
-            '节点 1 = 40°C/28%、节点 4 = 100°C/100% 由 EC 固定；这两行是你保存的曲线（存在 settings.json，重启面板也在），只能按 5 调'
+    # 这两行到底是谁的曲线：用户存的那份（settings.json）还是从 EC 当前表吸附来的。
+    # 原来有一块 CustHint 专门讲这件事，本轮为了腾高度把它合并进 PerfProto（同页、同样两行高）。
+    $n.PerfProto.Text = '· 节点 1/4 由 EC 固定；这两行' + $(if ($script:FanCurveSource -eq 'settings') {
+            '是你保存的曲线（存 settings.json，重启面板也在）'
         }
         else {
-            '节点 1 = 40°C/28%、节点 4 = 100°C/100% 由 EC 固定；这两行暂时是"EC 当前表吸附到 5 的倍数"——你按一次自定义/加减就会存成你自己的配置'
+            '暂时是 EC 吸附值，按一次加减就存成你的'
         })
 
     # ---- 显卡 ----
@@ -425,7 +427,7 @@ function Update-Panel {
         }
         else {
             $n.GpuNow.Text = '当前 {0}' -f $s.GpuModeName
-            $n.GpuNow.Foreground = Get-Brush '#FF6B7385'
+            $n.GpuNow.Foreground = Get-Brush '#FF98A1B3'
             $n.GpuRebootBtn.Visibility = 'Collapsed'
         }
     }
@@ -788,6 +790,8 @@ function Update-Panel {
         # ---- 输入设备（启动时读一次，值不会变）----
         $n.DevKb.Text = [string]$script:InputInfo.Keyboard
         $n.DevTp.Text = [string]$script:InputInfo.Touchpad
+        $n.Dev_Cpu.Text = $(if ($script:SysInfo.Cpu) { [string]$script:SysInfo.Cpu } else { '--' })
+        $n.Dev_Ram.Text = $(if ($script:SysInfo.RamGB -gt 0) { '{0:N0} GB' -f $script:SysInfo.RamGB } else { '--' })
         # 硬件身份（设备页）：这四行启动时查过一次（$script:SysInfo），这里只做格式化，
         # 不再每次重画都去问 CIM —— 序列号和 BIOS 版本运行期不会变。
         if ($n.Dev_Model) {
@@ -849,11 +853,11 @@ function Update-Panel {
     }
     elseif ($s.CurveHealth -eq 'measuring') {
         $n.CurveHealth.Text = '健康检查采样中…'
-        $n.CurveHealth.Foreground = Get-Brush '#FF6B7385'
+        $n.CurveHealth.Foreground = Get-Brush '#FF98A1B3'
     }
     else {
         $n.CurveHealth.Text = '自动/最大 模式不校验曲线'
-        $n.CurveHealth.Foreground = Get-Brush '#FF6B7385'
+        $n.CurveHealth.Foreground = Get-Brush '#FF98A1B3'
     }
     # The block below shows the table the EC is executing RIGHT NOW (block 13). This is the
     # only honest answer to "did the curve write actually take effect?" - it replaced a line
@@ -885,7 +889,7 @@ function Update-Panel {
     elseif ($s.Err) { $n.StatusText.Text = $s.Err; $n.StatusText.Foreground = Get-Brush '#FFE38A6F' }
     else {
         $n.StatusText.Text = 'InsydeDCHU → AcpiBridge (ACPI\CLV0001)   ·   每次写入均读回校验'
-        $n.StatusText.Foreground = Get-Brush '#FF6B7385'
+        $n.StatusText.Foreground = Get-Brush '#FF98A1B3'
     }
   }
   catch { Write-Dbg ('PAINT-ERR ' + $_.Exception.ToString()) }
@@ -901,4 +905,3 @@ function Update-Panel {
     }
   }
 }
-

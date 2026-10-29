@@ -1,4 +1,4 @@
-﻿# 无窗口 XAML 校验探针：只解析 XAML + 建 FindName 表，不 Show 任何窗口、不写 EC。
+# 无窗口 XAML 校验探针：只解析 XAML + 建 FindName 表，不 Show 任何窗口、不写 EC。
 # 必须在 src 目录下运行（头部代码用 $PSScriptRoot 找 misc.ps1 / model-guard.ps1）。
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase | Out-Null
@@ -76,14 +76,16 @@ Write-Output 'XAML-PROBE DONE'
 
 # ---- 8) 每页内容实际需要的尺寸（纯测量，不 Show） ----
 # 宽度链：窗口 468 − 根 Border 外边距 16×2 = 436；页框 Padding 20+20 = 396；页内 Padding 右边 6 → 390
-Write-Output '--- 每页期望高度（宽 390，页框可用高 464）---'
+# 可用高：页框 Height 480 − Padding 上下 14+12 = 454。452 是安全线（留 2px 抗字体差异），
+# 454 是物理上限。旧版本这里写 464，把灯效页 460 判成"放得下"，实际被裁 6.3px。
+Write-Output '--- 每页期望高度（宽 392，页框可用高 454 / 安全线 452）---'
 foreach ($t2 in 'State', 'Perf', 'Kb', 'Batt', 'Misc', 'Sys', 'About') {
     $sv = $win.FindName("Tab$t2")
     if ($null -eq $sv) { continue }
     $panel = $sv.Content
-    $panel.Measure((New-Object System.Windows.Size(390, [double]::PositiveInfinity)))
+    $panel.Measure((New-Object System.Windows.Size(392, [double]::PositiveInfinity)))
     $h = [Math]::Round($panel.DesiredSize.Height, 1)
-    $mark = if ($h -le 464) { '✔ 放得下' } else { '✘ 超出 ' + [Math]::Round($h - 464, 1) + 'px' }
+    $mark = if ($h -le 452) { '✔ 放得下' } else { if ($h -le 454) { '△ 贴边 ' + $h + 'px（剩 ' + [Math]::Round(454 - $h, 1) + '）' } else { '✘ 超出 ' + [Math]::Round($h - 454, 1) + 'px' } }
     Write-Output ('  Tab{0,-6} 需要 {1,7} px   {2}' -f $t2, $h, $mark)
 }
 
@@ -93,7 +95,7 @@ foreach ($t2 in 'State', 'Perf', 'Kb', 'Batt', 'Misc', 'Sys', 'About') {
 Write-Output 'OFFSCREEN-RENDER begin'
 $rt = 1.5
 $root = $win.Content
-$outDir = 'C:\Users\yeguang\DSH\_probe\r11'
+$outDir = Join-Path (Split-Path $PSScriptRoot -Parent) '_probe\r12'
 if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 
 # 用真实长度的示例文字，才能看出"字被吞掉"这类问题
@@ -121,6 +123,13 @@ $sample = @{
     'MiscHint' = '这里的开关直接写 EC，重启后保持。摄像头没有对应命令字，所以本工具不提供摄像头开关。'
     'CoolHint' = '温度/转速来自 EC 与 NVML，1 秒刷新一次。'
     'AboutCheckUpdateT' = '检查更新'; 'AboutUpdateStatus' = '已是最新版（v1.3）'
+    # 概览页六大数字与内存行：旧版漏灌，导致验收图里全是 "--"，把"占位没灌值"误诊成"内容太少"
+    'CpuTemp' = '72'; 'CpuFreq' = '4.21'; 'CpuPower' = '38'; 'CpuUtil' = '18'
+    'CpuRpm' = '2450'; 'CpuDutyText' = '42%'
+    'GpuTemp' = '37'; 'GpuFreq' = '1.35'; 'GpuPower' = '22'; 'GpuUtil' = '7'
+    'GpuRpm' = '0'; 'GpuDutyText' = '0% 停转'
+    'MemText' = '16 GB / 32 GB · 4800 MHz'
+    'WheelText' = '#B98BFF'
 }
 foreach ($k in $sample.Keys) {
     $c = $win.FindName($k)
