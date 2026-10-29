@@ -1,4 +1,4 @@
-# 无窗口 XAML 校验探针：只解析 XAML + 建 FindName 表，不 Show 任何窗口、不写 EC。
+﻿# 无窗口 XAML 校验探针：只解析 XAML + 建 FindName 表，不 Show 任何窗口、不写 EC。
 # 必须在 src 目录下运行（头部代码用 $PSScriptRoot 找 misc.ps1 / model-guard.ps1）。
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase | Out-Null
@@ -108,9 +108,11 @@ $sample = @{
     'RunUp' = '2 小时 14 分'; 'RunFreq' = '1000 ms'; 'RunLogSize' = '412 KB'
     'RunLogPath' = '%LOCALAPPDATA%\ClevoHelper\artifacts\monitor-debug.log'
     'DevKb' = 'VID_048D / PID_8910 · ITE 829x'; 'DevTp' = 'HID-compliant mouse · HID'
-    'BhHealth' = '88.6 %'; 'BhCycles' = '2024-06'; 'BhDesign' = '103,056 mWh'
+    'BhHealth' = '88.6 %'; 'BhCycles' = '11.4 %'; 'BhDesign' = '103,056 mWh'
     'BhFull' = '91,352 mWh'; 'BhNow' = '72,671 mWh'; 'BhVolt' = '16.31 V'
     'BhRate' = '-12.4 W'; 'BhTemp' = '28.6 ℃'; 'BhMfr' = 'SMP'; 'BhDev' = 'DELL 4K1VY42'; 'BhChem' = 'LiP'; 'BhLeft' = '接电源'
+    # 容量历史：火花线要真灌值，否则渲染出来是「—」看不出行宽够不够
+    'BhTrend' = '█▇▃▃▃▂▁'; 'BhTrendTxt' = '91.8% → 88.6%'
     'TitleTemps' = 'CPU 72° · GPU 37°'
     'BattText' = '72% · 放电中'; 'BattAdvice' = '建议：电量低于 20% 时接上电源，长期插电建议把充电上限设到 80%。'
     'ChargerHint' = '当前 70%–80%：插着也只在低于 70% 时充，到 80% 停。'

@@ -301,3 +301,90 @@ function Set-ScreenBrightness {
     $after = Get-ScreenBrightness
     [pscustomobject]@{ Applied = $true; Quick = $false; Ok = ([Math]::Abs($after.Percent - $Percent) -le 1); Before = $before.Percent; After = $after.Percent }
 }
+
+# ---------------- 电池报告 / 容量历史 -----------------------------------------
+# Windows 自己每周记一次"满充容量"，这份数据只有 powercfg /batteryreport 的 HTML 里有。
+# 循环次数这块电池不提供（报告里 CYCLE COUNT 是空的），但容量历史是实的，衰减看得见。
+function Get-BatteryReportPath {
+    <# 报告落在 artifacts 目录，和日志放一起。 #>
+    [CmdletBinding()] param()
+    $dir = Join-Path $env:LOCALAPPDATA 'ClevoHelper\artifacts'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Join-Path $dir 'battery-report.html'
+}
+
+function Update-BatteryReport {
+    <# 生成 Windows 电池报告。约 1 秒。返回 @{ Ok; Path; Error }。 #>
+    [CmdletBinding()] param()
+    $p = Get-BatteryReportPath
+    try {
+        if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+        $exe = Join-Path $env:WINDIR 'System32\powercfg.exe'
+        $out = & $exe /batteryreport /output $p 2>&1
+        if (-not (Test-Path $p)) { return [pscustomobject]@{ Ok = $false; Path = $p; Error = ([string]$out) } }
+        [pscustomobject]@{ Ok = $true; Path = $p; Error = '' }
+    }
+    catch { [pscustomobject]@{ Ok = $false; Path = $p; Error = $_.Exception.Message } }
+}
+
+function Get-BatteryHistory {
+    <# 满充容量历史（7 天一段）。7 天内复用缓存，避免每次启动都跑 powercfg。 #>
+    [CmdletBinding()]
+    param([switch]$Refresh)
+    $cache = Join-Path (Split-Path -Parent (Get-BatteryReportPath)) 'battery-history.json'
+    if (-not $Refresh -and (Test-Path $cache)) {
+        try {
+            $c = Get-Content $cache -Raw -Encoding UTF8 | ConvertFrom-Json
+            # At 必须是 ISO 字符串（见下面写回）；老缓存里可能是 ConvertTo-Json 把 DateTime
+            # 展开成的 @{value=...; DateTime=...}，两种都认，认不出就当缓存过期重算。
+            $at = $null
+            try {
+                if ($c.At -is [string]) { $at = [datetime]::Parse($c.At) }
+                elseif ($c.At.value) { $at = [datetime]$c.At.value }
+                elseif ($c.At) { $at = [datetime]$c.At }
+            }
+            catch { }
+            if ($at -and ((Get-Date) - $at).TotalDays -lt 7 -and $c.Points) {
+                return [pscustomobject]@{ Source = 'cache'; At = $at; Points = @($c.Points); Error = '' }
+            }
+        }
+        catch { }
+    }
+    $r = Update-BatteryReport
+    if (-not $r.Ok) { return [pscustomobject]@{ Source = 'none'; At = $null; Points = @(); Error = $r.Error } }
+    $pts = @()
+    try {
+        $h = [System.IO.File]::ReadAllText($r.Path)
+        $flat = ($h -replace '(?s)<style.*?</style>', '' -replace '(?s)<script.*?</script>', '' -replace '<[^>]+>', ' ' -replace '&nbsp;', '') -replace '\s+', ' '
+        foreach ($m in [regex]::Matches($flat, '(\d{4}-\d{2}-\d{2})\s*-\s*(\d{4}-\d{2}-\d{2})\s*([\d,]+)\s*mWh\s*([\d,]+)\s*mWh')) {
+            $full = [int]($m.Groups[3].Value -replace ',', '')
+            $des = [int]($m.Groups[4].Value -replace ',', '')
+            if ($des -gt 0 -and $full -gt 0) {
+                $pts += [pscustomobject]@{
+                    Start  = $m.Groups[1].Value
+                    End    = $m.Groups[2].Value
+                    Full   = $full
+                    Design = $des
+                    Health = [Math]::Round(100.0 * $full / $des, 1)
+                }
+            }
+        }
+    }
+    catch { }
+    # At 一定写成 ISO 字符串：ConvertTo-Json 在 5.1 里会把 DateTime 展开成 @{value;DisplayHint;DateTime}，
+    # 下次 ConvertFrom-Json 回来就再也转不回 DateTime，缓存永远失效（踩过）。
+    try { [pscustomobject]@{ At = (Get-Date).ToString('o'); Points = $pts } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $cache -Encoding UTF8 } catch { }
+    [pscustomobject]@{ Source = 'report'; At = (Get-Date); Points = $pts; Error = '' }
+}
+
+function Format-Sparkline {
+    <# 把一串数值画成 ▁▂▃▄▅▆▇█ 的火花线。少于两点返回「—」。 #>
+    [CmdletBinding()]
+    param([double[]]$Values)
+    if (-not $Values -or $Values.Count -lt 2) { return '—' }
+    $blocks = @([char]0x2581, [char]0x2582, [char]0x2583, [char]0x2584, [char]0x2585, [char]0x2586, [char]0x2587, [char]0x2588)
+    $min = ($Values | Measure-Object -Minimum).Minimum
+    $max = ($Values | Measure-Object -Maximum).Maximum
+    if ($max -eq $min) { return (-join ($blocks[4] * $Values.Count)) }
+    -join ($Values | ForEach-Object { $blocks[[int][Math]::Round(($_-$min)/($max-$min)*7)] })
+}

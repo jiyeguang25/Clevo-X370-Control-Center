@@ -717,11 +717,17 @@ function Update-Panel {
             $n.BhDev.Text  = $(if ($bh.Dev)  { [string]$bh.Dev }  else { '—' })
             $n.BhChem.Text = $(if ($bh.Chem) { [string]$bh.Chem } else { '—' })
             # 预计可用：Win32_Battery.EstimatedRunTime 单位分钟；接电源时是 71582788（无效值）→ 显示"接电源"。
-            $runMin = 0
-            try {
-                $wb = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($wb -and $wb.EstimatedRunTime -and [int]$wb.EstimatedRunTime -lt 100000) { $runMin = [int]$wb.EstimatedRunTime }
-            } catch { }
+            # **60 秒缓存**：这里每帧重画都会走到。直接查 WMI 会让电池页每帧多花 50~70ms
+            # （日志里整串 "PAINT-SLOW 51~73ms 标签页 batt" 就是它），而这个值本身一分钟才变一次。
+            if ($null -eq $script:BattRunMinT -or ((Get-Date) - $script:BattRunMinT).TotalSeconds -ge 60) {
+                $script:BattRunMin = 0
+                try {
+                    $wb = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($wb -and $wb.EstimatedRunTime -and [int]$wb.EstimatedRunTime -lt 100000) { $script:BattRunMin = [int]$wb.EstimatedRunTime }
+                } catch { }
+                $script:BattRunMinT = Get-Date
+            }
+            $runMin = [int]$script:BattRunMin
             $n.BhLeft.Text = $(if ($runMin -gt 0) { $(if ($runMin -ge 60) { '{0} 小时 {1} 分' -f [int]($runMin / 60), ($runMin % 60) } else { '{0} 分钟' -f $runMin }) } else { '接电源' })
             $n.BhNow.Text = $(if ($bh.Now) { '{0:N1} Wh' -f ($bh.Now / 1000.0) } else { '—' })
             $n.BhVolt.Text = $(if ($bh.VoltMv) { '{0:N2} V' -f ($bh.VoltMv / 1000.0) } else { '—' })
@@ -738,7 +744,19 @@ function Update-Panel {
             else { $n.BhRate.Text = '—' }
             # 温度字段是十分之一开尔文（2982 = 25.05 ℃）；0 表示不报。
             $n.BhTemp.Text = $(if ($bh.TempK10 -and [int]$bh.TempK10 -gt 1000) { '{0:N1} ℃' -f ([int]$bh.TempK10 / 10.0 - 273.15) } else { '—' })
-
+            # ---- 容量历史：每条 7 天一段，画成火花线；首尾各标一个健康度 ----
+            $hh = $script:BattHistory
+            if ($hh -and $hh.Points -and $hh.Points.Count -ge 2) {
+                $vals = [double[]]@($hh.Points | ForEach-Object { [double]$_.Health })
+                # 只画最近 8 段：全画会把这一行撑爆（10 段时「删除」被挤出卡片外，截图里只剩一条红边）
+                $tail = [double[]]@($vals | Select-Object -Last 8)
+                $n.BhTrend.Text = Format-Sparkline $tail
+                $n.BhTrendTxt.Text = ('{0:N1}% → {1:N1}%' -f $tail[0], $tail[$tail.Count - 1])
+            }
+            else {
+                $n.BhTrend.Text = '—'
+                $n.BhTrendTxt.Text = '（点右侧生成报告）'
+            }
         }
         else {
             foreach ($k in 'BhHealth', 'BhCycles', 'BhDesign', 'BhFull', 'BhNow', 'BhVolt', 'BhRate', 'BhTemp', 'BhMfr', 'BhDev', 'BhChem', 'BhLeft') { $n[$k].Text = '—' }

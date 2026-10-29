@@ -312,6 +312,8 @@ catch { Write-Dbg ('sysinfo probe failed: ' + $_.Exception.Message) }
 . (Join-Path $PSScriptRoot 'misc.ps1')
 $script:BattHealth = [pscustomobject]@{ Supported = $false }
 try { $script:BattHealth = Get-BatteryHealth } catch { Write-Dbg ('battery health probe failed: ' + $_.Exception.Message) }
+$script:BattHistory = Get-BatteryHistory   # 满充容量历史（7 天缓存，来自 powercfg 报告）
+$script:BattRunMin = 0; $script:BattRunMinT = $null   # 「预计可用」的 60 秒缓存（见 panel-paint.ps1）
 $script:InputInfo = [pscustomobject]@{ Keyboard = '--'; Touchpad = '--' }
 try { $script:InputInfo = Get-InputDevices } catch { Write-Dbg ('input device probe failed: ' + $_.Exception.Message) }
 
@@ -1336,7 +1338,7 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                   </Grid.RowDefinitions>
                   <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Margin="0,2,0,0">
                     <TextBlock Text="厂商 " Foreground="#FF8A93A6" FontSize="11"/>
@@ -1354,7 +1356,24 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
                     <TextBlock Text="预计可用 " Foreground="#FF8A93A6" FontSize="11"/>
                     <TextBlock x:Name="BhLeft" Text="--" Foreground="#FFD7DCE6" FontSize="11.5"/>
                   </StackPanel>
-                </Grid>
+                                  <!-- 容量历史：Windows 每周记一次满充容量，衰减看得见（循环次数这块电池不报）。
+                       左边火花线只画最近 8 段；右边两个入口：生成 ↗ 现跑 powercfg 并打开，删除 直接把报告文件删掉。 -->
+                  <Grid Grid.Row="2" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto"/>
+                      <ColumnDefinition Width="*"/>
+                      <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                      <TextBlock Text="容量历史 " Foreground="#FF8A93A6" FontSize="11" VerticalAlignment="Center"/>
+                      <TextBlock x:Name="BhTrend" Text="--" Foreground="#FFB98BFF" FontSize="10.5" FontFamily="Consolas" VerticalAlignment="Center"/>
+                      <TextBlock x:Name="BhTrendTxt" Text="" Foreground="#FF98A1B3" FontSize="11" Margin="7,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                      <TextBlock x:Name="BhReport" Text="生成 ↗" Foreground="#FF57B0FF" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+                      <TextBlock x:Name="BhDel" Text="删除" Foreground="#FFE38A6F" FontSize="11" Margin="9,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                    </StackPanel>
+                  </Grid></Grid>
               </StackPanel>
             </Border>
             </StackPanel>           </ScrollViewer>
@@ -1531,6 +1550,8 @@ foreach ($r in $script:AboutRows) { $names += ('About_' + $r.Key) }
     foreach ($r in $script:DevRows) { $names += ('Dev_' + $r.Key) }
     $names += @('RunUp', 'RunFreq', 'RunLogSize', 'RunLogPath')
 for ($i = 0; $i -lt $script:LedDirPills.Count; $i++) { $names += "Dir$i"; $names += "Dir${i}T" }
+$names += @('BhDel')
+$names += @('BhTrend', 'BhTrendTxt', 'BhReport')
 foreach ($k in $names) { $n[$k] = $script:Win.FindName($k) }
 
 $n.TitleBar.Add_MouseLeftButtonDown({
@@ -1948,6 +1969,26 @@ $n.TabBtnKb.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'kb' })
 $n.TabBtnBatt.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'batt' })
 $n.TabBtnMisc.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'misc' })
 $n.TabBtnSys.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'sys' })
+# ---- 「生成报告」：只在用户点了才跑 powercfg（约 1 秒），跑完由系统默认程序打开 ----
+$n.BhReport.Add_MouseLeftButtonUp({
+    try {
+        Set-Status '正在生成电池报告…'
+        $r = Update-BatteryReport
+        if (-not $r.Ok) { Set-Status ('生成失败：' + $r.Error); return }
+        $script:BattHistory = Get-BatteryHistory -Refresh
+        Set-Status ('已生成电池报告：' + $r.Path)
+        Start-Process -FilePath $r.Path
+    } catch { Set-Status ('生成报告出错：' + $_.Exception.Message) }
+})
+# ---- 「删除」：删掉生成出来的报告文件；容量历史走 7 天缓存，删报告不影响折线 ----
+$n.BhDel.Add_MouseLeftButtonUp({
+    try {
+        $rp = Get-BatteryReportPath
+        if (-not (Test-Path $rp)) { Set-Status '还没有生成过电池报告'; return }
+        Remove-Item $rp -Force -ErrorAction Stop
+        Set-Status ('已删除电池报告：' + $rp)
+    } catch { Set-Status ('删除失败（可能还开在浏览器里）：' + $_.Exception.Message) }
+})
 $n.TabBtnAbout.Add_MouseLeftButtonUp({ $script:LedSel.Tab = 'about' })
 
 # ---- 关于页：头像 + 名片 + 信息行 -------------------------------------------
