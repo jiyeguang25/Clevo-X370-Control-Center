@@ -1848,30 +1848,39 @@ for ($i = 0; $i -lt $script:ChargerStopPills.Count; $i++) {
 #   3. 百分比文字要等写入回来才更新。
 # 所以：拖动中用时间闸（≥120ms 才发一次，中间的自然被合并）+ 立刻本地显示数字 +
 # 回读值在拖动中/有写入在飞时不碰滑块；松手时补发最后一个值并做一次带校验的写入。
-$script:BrightDragging = $false
-$script:BrightSyncing = $false      # 面板自己给滑块赋值时，别把这次赋值当成用户操作再写一遍
-$script:BrightLastSent = [datetime]::MinValue
-$script:BrightTickMs = 120
+$script:BrightDragging = $false      # 正在拖：此时只改数字，绝不写硬件
+$script:BrightSyncing = $false       # 面板自己给滑块赋值时，别把这次赋值当成用户操作再写一遍
+# 亮度是 WMI 写（每次都先读再写，单次 100–300ms），一秒写八次就会把显示管线占满，
+# 表现出来就是"滑杆一顿一顿"。所以：拖动中一次都不写；单击/键盘改值走 260ms 防抖；
+# 松手补最后一发。和电池页充电轨道的"拖动只预览、松手写一次"是同一条规矩。
+$script:BrightDebounce = New-Object System.Windows.Threading.DispatcherTimer
+$script:BrightDebounce.Interval = [TimeSpan]::FromMilliseconds(260)
+$script:BrightDebounce.Add_Tick({
+    $script:BrightDebounce.Stop()
+    if ($script:BrightDragging) { return }
+    Request-Misc -Sub 'bright' -Value ([int][Math]::Round($n.BrightSlider.Value))
+})
 $n.BrightSlider.Add_ValueChanged({
     if ($script:BrightSyncing) { return }             # 这一下是面板同步读回值，不是用户在拖
     $v = [int][Math]::Round($n.BrightSlider.Value)
     $script:MiscSel.Bright = $v
     $n.BrightVal.Text = '{0}%' -f $v                    # 立刻显示，不等写入
-    $now = Get-Date
-    if ($script:BrightDragging -and (($now - $script:BrightLastSent).TotalMilliseconds -lt $script:BrightTickMs)) { return }
-    $script:BrightLastSent = $now
-    Request-Misc -Sub 'bright' -Value $v
+    if ($script:BrightDragging) { return }              # 拖动中只预览，不写硬件
+    $script:BrightDebounce.Stop()
+    $script:BrightDebounce.Start()
 })
 $n.BrightSlider.AddHandler([System.Windows.Controls.Primitives.Thumb]::DragStartedEvent,
     [System.Windows.RoutedEventHandler]{
         $script:BrightDragging = $true
+        $script:BrightDebounce.Stop()
         $n.StatusText.Text = '正在调屏幕亮度…'
         $n.StatusText.Foreground = Get-Brush '#FF8A93A6'
     })
 $n.BrightSlider.AddHandler([System.Windows.Controls.Primitives.Thumb]::DragCompletedEvent,
     [System.Windows.RoutedEventHandler]{
         $script:BrightDragging = $false
-        Request-Misc -Sub 'bright' -Value ([int][Math]::Round($n.BrightSlider.Value))   # 松手补一发（带校验）
+        $script:BrightDebounce.Stop()
+        Request-Misc -Sub 'bright' -Value ([int][Math]::Round($n.BrightSlider.Value))   # 松手写一次（带校验）
     })
 
 # 通用开关：名称 -> (请求 Sub, 用的 pill 表)。点击只发目标状态，读回由 sampler 做。
