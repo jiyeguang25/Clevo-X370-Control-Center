@@ -726,7 +726,7 @@ $xaml = @"
             <TextBlock x:Name="TabBtnStateT" Text="概览" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
           <Border Grid.Column="1" x:Name="TabBtnPerf" Background="#FF272C36" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
-            <TextBlock x:Name="TabBtnPerfT" Text="性能·散热" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
+            <TextBlock x:Name="TabBtnPerfT" Text="散热" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
           </Border>
           <Border Grid.Column="2" x:Name="TabBtnKb" Background="#FF272C36" CornerRadius="12" Margin="0,0,3,0" Padding="0,5" Cursor="Hand">
             <TextBlock x:Name="TabBtnKbT" Text="灯效" Foreground="#FF98A1B3" FontSize="11" TextAlignment="Center"/>
@@ -1046,12 +1046,15 @@ $(New-StepperXaml 'Ct3D' '转速' '%')
                  to the things it undoes instead of competing with the tab buttons. -->
             <Border x:Name="RevertBtn" Background="#FF272C36" CornerRadius="13" Padding="0,6" Margin="0,10,0,0" Cursor="Hand">
               <TextBlock x:Name="RevertBtnT" Text="恢复初始（电源·风扇·曲线·显卡·键盘灯）" Foreground="#FF98A1B3" FontSize="12" TextAlignment="Center"/>
-            </Border>            <TextBlock x:Name="PerfProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0"
-                       Text="· 「当前生效」里的电源 / 风扇 / 显卡都是回读值，被外部改掉会立刻跟着变。"/>
+            </Border>
+            <TextBlock x:Name="PerfProto" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,8,0,0"
+                       Text="· 电源 / 风扇 / 显卡 / 键盘灯显示的都是硬件回读值，被别处改掉会立刻跟着变。"/>
             <TextBlock x:Name="PerfScene" Foreground="#FF8A93A6" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"
-                       Text="· 节点 1（40°C/28%）与节点 4（100°C/100%）由 EC 固定，这两行只控制中间两档。"/>                        <TextBlock x:Name="RevertHint" Foreground="#FF98A1B3" FontSize="10.5" TextWrapping="Wrap" Margin="2,8,0,0"
+                       Text="· 节点 1（40°C/28%）与节点 4（100°C/100%）由 EC 固定，这两行只控制中间两档。"/>
+            <TextBlock x:Name="RevertHint" Foreground="#FF98A1B3" FontSize="10.5" TextWrapping="Wrap" Margin="2,8,0,0"
                        Text="恢复初始：把电源、风扇、曲线、显卡、键盘灯改回本次开机时的值（亮度不动），约 2 秒。"/>
-            </StackPanel>           </ScrollViewer>
+            </StackPanel>
+          </ScrollViewer>
 
           <!-- ============ 键盘灯 ============ -->
           <ScrollViewer x:Name="TabKb" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
@@ -1210,7 +1213,8 @@ $(foreach ($r in $script:DevRows) { New-AboutRowXaml ("Dev_" + $r.Key) $r.Label 
 
 <TextBlock x:Name="MiscHint" Foreground="#FF98A1B3" FontSize="11" TextWrapping="Wrap"
                        Text="摄像头切换只有原厂 cc30wk.exe 一条路，本面板不提供。开关显示的都是读回值。"/>
-            </StackPanel>           </ScrollViewer>
+            </StackPanel>
+          </ScrollViewer>
 
           <!-- ============ 散热 ============ -->
 
@@ -1376,7 +1380,8 @@ $(New-PillXaml 'ChgE' $script:ChargerStopPills 32)
                   </Grid></Grid>
               </StackPanel>
             </Border>
-            </StackPanel>           </ScrollViewer>
+            </StackPanel>
+          </ScrollViewer>
 
 
           <!-- ============ 系统 ============ -->
@@ -1429,7 +1434,8 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
             <TextBlock x:Name="AboutChannelWarn" Foreground="#FFE38A6F" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
                        Visibility="Collapsed"
                        Text="⚠ EC 通道当前读不到数据：温度/风扇/模式/键盘灯这些按钮都会失效。修复办法（任一）：托盘右键 → 修复 DCHU 驱动…；或运行 ClevoHelper.exe --install-driver（会弹 UAC），完成后重启面板。"/>
-            </StackPanel>           </ScrollViewer>
+            </StackPanel>
+          </ScrollViewer>
 
           <!-- ============ 关于 ============ -->
           <ScrollViewer x:Name="TabAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Padding="0,0,0,0">
@@ -1472,7 +1478,8 @@ $(New-AboutRowXaml 'RunLogPath' '日志位置')
                        Text="原理：温度/风扇/模式/键盘灯都走原厂那条 InsydeDCHU → AcpiBridge 通道（ACPI\CLV0001），和原厂控制中心用的是同一条路；每次写入都会从硬件读回校验，状态栏绿色=一致、橙色=不一致。显卡模式是开机前值，只能重启后生效，所以本面板只暂存、不替你重启。"/>
             <TextBlock x:Name="AboutDisclaimer" Foreground="#FF8A93A6" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0"
                        Text="个人自用工具，与蓝天（Clevo）及其代工厂无关；所有写入都基于本机实测逆向出来的协议，换机器不保证可用。"/>
-            </StackPanel>           </ScrollViewer>
+            </StackPanel>
+          </ScrollViewer>
 
         </StackPanel>
       </Border>

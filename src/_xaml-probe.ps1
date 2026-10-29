@@ -110,7 +110,7 @@ $sample = @{
     'DevKb' = 'VID_048D / PID_8910 · ITE 829x'; 'DevTp' = 'HID-compliant mouse · HID'
     'BhHealth' = '88.6 %'; 'BhCycles' = '11.4 %'; 'BhDesign' = '103,056 mWh'
     'BhFull' = '91,352 mWh'; 'BhNow' = '72,671 mWh'; 'BhVolt' = '16.31 V'
-    'BhRate' = '-12.4 W'; 'BhTemp' = '28.6 ℃'; 'BhMfr' = 'SMP'; 'BhDev' = 'DELL 4K1VY42'; 'BhChem' = 'LiP'; 'BhLeft' = '接电源'
+    'BhRate' = '放电 12.4 W'; 'BhTemp' = '28.6 ℃'; 'BhMfr' = 'SMP'; 'BhDev' = 'DELL 4K1VY42'; 'BhChem' = 'LiP'; 'BhLeft' = '接电源'; 'AboutName' = '极夜光'; 'AboutTitle' = 'ClevoHelper v1.5'; 'AboutMail' = 'yeguang225@outlook.com'; 'AboutTagline' = '蓝天 Clevo X370SN · G-Helper 风格控制中心（自包含单文件）'
     # 容量历史：火花线要真灌值，否则渲染出来是「—」看不出行宽够不够
     'BhTrend' = '█▇▃▃▃▂▁'; 'BhTrendTxt' = '91.8% → 88.6%'
     'TitleTemps' = 'CPU 72° · GPU 37°'
