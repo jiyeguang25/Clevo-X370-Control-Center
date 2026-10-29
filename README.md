@@ -1,4 +1,4 @@
-# 蓝天 Clevo X370SN 控制中心（ClevoHelper）
+﻿# 蓝天 Clevo X370SN 控制中心（ClevoHelper）
 
 给**七彩虹将星 X17 Pro Max（蓝天 Clevo X370SN 准系统）**做的 G-Helper 风格控制中心 ——
 **一个 9.5 MB 的 exe**，免安装，温度/风扇/电源模式/风扇曲线/显卡模式/键盘灯/充电上限全在里面。
@@ -24,7 +24,7 @@
 
 ## 下载与安装
 
-到本仓库的 **Releases** 页面下载最新那个 **`ClevoHelper-v1.3.zip`**（注意是 zip，不是 exe）：
+到本仓库的 **Releases** 页面下载最新那个 **`ClevoHelper-v1.4.zip`**（注意是 zip，不是 exe）：
 
 | 步骤 | 做什么 |
 |---|---|
